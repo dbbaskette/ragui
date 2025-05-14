@@ -1,6 +1,6 @@
-# RAGUI: Retrieval-Augmented Generation UI Backend
+# RAGUI: Retrieval-Augmented Generation UI Front End
 
-RAGUI is a Spring Boot backend that provides a chat interface powered by Retrieval-Augmented Generation (RAG) using Spring AI, Ollama LLM, and a PgVector vector store. It enables users to ask questions and receive answers based on both retrieved context from a vector database and the language model's own knowledge, with robust fallback logic.
+RAGUI is a Spring Boot service that acts as a front end (API gateway and orchestration layer) for your Retrieval-Augmented Generation (RAG) environment. It exposes a chat interface powered by Spring AI, Ollama LLM, and a PgVector vector store. RAGUI enables users or client applications to interact with your RAG stack, sending questions and receiving answers based on both retrieved vector context and the language model's own knowledge, with robust fallback logic.
 
 ## Features
 
