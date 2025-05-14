@@ -5,22 +5,88 @@ body {
     padding: 0;
 }
 .chat-container {
-    max-width: 480px;
+    max-width: 700px;
     margin: 40px auto;
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 2px 18px #0001;
     padding: 24px 18px 12px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.response-box {
+    min-height: 210px;
+    max-height: 420px;
+    margin-bottom: 18px;
+    background: #f4f7fa;
+    border: 1.5px solid #e0e5f2;
+    border-radius: 10px;
+    box-shadow: 0 1px 8px #0001;
+    padding: 28px 20px 18px 20px;
+    font-size: 1.22em;
+    font-family: inherit;
+    color: #222b3a;
+    transition: border 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    overflow-y: auto;
+    word-break: break-word;
+}
+
+.msg {
+    margin: 6px 0;
+    padding: 8px 12px;
+    border-radius: 8px;
+    display: inline-block;
+    max-width: 95%;
+    word-break: break-word;
+}
+
+.response-box .msg {
+    width: fit-content;
+    min-width: 48px;
+}
+
+.response-box .placeholder {
+    color: #aaa;
+    font-style: italic;
+}
+
+@media (max-width: 700px) {
+    .chat-container {
+        flex-direction: column;
+        gap: 0;
+    }
+    .llm-options-box {
+        margin-left: 0 !important;
+        margin-top: 18px;
+        width: 100% !important;
+    }
 }
 .chat-messages {
+    height: 340px;
     min-height: 180px;
-    max-height: 320px;
+    max-height: 340px;
     overflow-y: auto;
-    margin-bottom: 20px;
-    border: 1px solid #eee;
-    border-radius: 8px;
+    margin-bottom: 0;
+    border: 1px solid #e5e7ef;
+    border-radius: 10px;
     background: #fafbfc;
-    padding: 10px;
+    padding: 14px 10px 10px 14px;
+    box-shadow: 0 1px 8px #0001;
+    flex: 3;
+    font-size: 1.09em;
+    transition: border 0.2s;
+}
+
+@media (max-width: 700px) {
+    .chat-messages {
+        height: 220px;
+        max-height: 220px;
+    }
 }
 .msg {
     margin: 6px 0;
@@ -40,12 +106,14 @@ body {
     display: flex;
     gap: 8px;
 }
-.chat-form input {
+.chat-form input[type="text"] {
     flex: 1;
-    padding: 8px;
+    padding: 10px;
     border-radius: 6px;
     border: 1px solid #ccc;
-    font-size: 1em;
+    font-size: 1.08em;
+    width: 100%;
+    margin-bottom: 0;
 }
 .chat-form button {
     padding: 8px 16px;
@@ -55,6 +123,30 @@ body {
     color: #fff;
     font-size: 1em;
     cursor: pointer;
+    margin-top: 8px;
+}
+
+.llm-options-box {
+    flex: 1;
+    min-width: 180px;
+    max-width: 220px;
+    background: #f6f7fb;
+    border: 1px solid #d2d9ee;
+    border-radius: 10px;
+    padding: 14px 12px 10px 12px;
+    margin-left: 8px;
+    align-self: flex-start;
+    box-shadow: 0 1px 8px #0001;
+}
+
+.llm-options-box label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 0.98em;
+}
+
+.llm-options-box input[type="radio"] {
+    margin-right: 6px;
 }
 .chat-form button:disabled {
     background: #b0bec5;

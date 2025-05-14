@@ -4,6 +4,7 @@ function ChatApp() {
     const [input, setInput] = React.useState("");
     const [messages, setMessages] = React.useState([]);
     const [loading, setLoading] = React.useState(false);
+    const [includeLlmFallback, setIncludeLlmFallback] = React.useState(true); // default enabled
 
     const sendMessage = async (e) => {
         e.preventDefault();
@@ -14,10 +15,16 @@ function ChatApp() {
             const res = await fetch("/api/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: input })
+                body: JSON.stringify({ message: input, includeLlmFallback })
             });
             const data = await res.json();
-            setMessages(msgs => [...msgs, { sender: "llm", text: data.response }]);
+            setMessages(msgs => [
+                ...msgs,
+                {
+                    sender: "llm",
+                    text: data.answer + (data.source ? ` (source: ${data.source})` : "")
+                }
+            ]);
         } catch (err) {
             setMessages(msgs => [...msgs, { sender: "llm", text: "Error: " + err }]);
         }
@@ -25,26 +32,61 @@ function ChatApp() {
         setLoading(false);
     };
 
+    React.useEffect(() => {
+        const el = document.querySelector('.chat-messages');
+        if (el) el.scrollTop = el.scrollHeight;
+    }, [messages]);
+
     return (
         React.createElement("div", { className: "chat-container" },
-            React.createElement("h2", null, "RAG UI Chat"),
-            React.createElement("div", { className: "chat-messages" },
-                messages.map((m, i) =>
-                    React.createElement("div", {
-                        key: i,
-                        className: m.sender === "user" ? "msg user" : "msg llm"
-                    }, m.sender === "user" ? "You: " : "AI: ", m.text)
-                )
+            React.createElement("div", { className: "response-box" },
+                messages.length === 0
+                    ? React.createElement("div", { className: "placeholder" }, "Responses will appear here.")
+                    : messages.map((m, i) =>
+                        React.createElement("div", {
+                            key: i,
+                            className: "msg " + (m.sender === "user" ? "user" : "llm")
+                        }, m.sender === "user" ? "You: " : "AI: ", m.text)
+                    )
             ),
-            React.createElement("form", { onSubmit: sendMessage, className: "chat-form" },
-                React.createElement("input", {
-                    value: input,
-                    onChange: e => setInput(e.target.value),
-                    disabled: loading,
-                    placeholder: "Type your message...",
-                    autoFocus: true
-                }),
-                React.createElement("button", { type: "submit", disabled: loading }, loading ? "..." : "Send")
+            React.createElement("div", { style: { display: "flex", gap: 16, marginTop: 10 } },
+                React.createElement("div", { style: { flex: 3, display: "flex", flexDirection: "column" } },
+                    React.createElement("form", { onSubmit: sendMessage, className: "chat-form" },
+                        React.createElement("input", {
+                            type: "text",
+                            value: input,
+                            onChange: e => setInput(e.target.value),
+                            disabled: loading,
+                            placeholder: "Type your message...",
+                            autoFocus: true,
+                            style: { width: "100%", fontSize: "1.08em", padding: "10px", borderRadius: "6px", border: "1px solid #ccc", marginBottom: 0 }
+                        }),
+                        React.createElement("button", { type: "submit", disabled: loading, style: { marginTop: 8 } }, loading ? "..." : "Send")
+                    )
+                ),
+                React.createElement("div", { className: "llm-options-box" },
+                    React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "LLM Fallback Options"),
+                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.96em' } },
+                        React.createElement("input", {
+                            type: "radio",
+                            name: "llmFallback",
+                            checked: includeLlmFallback,
+                            onChange: () => setIncludeLlmFallback(true),
+                            style: { marginRight: 4 }
+                        }),
+                        "Include LLM response"
+                    ),
+                    React.createElement("label", { style: { display: "block", fontSize: '0.96em' } },
+                        React.createElement("input", {
+                            type: "radio",
+                            name: "llmFallback",
+                            checked: !includeLlmFallback,
+                            onChange: () => setIncludeLlmFallback(false),
+                            style: { marginRight: 4 }
+                        }),
+                        "Only use RAG context"
+                    )
+                )
             )
         )
     );
