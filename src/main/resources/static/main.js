@@ -4,7 +4,7 @@ function ChatApp() {
     const [input, setInput] = React.useState("");
     const [messages, setMessages] = React.useState([]);
     const [loading, setLoading] = React.useState(false);
-    const [includeLlmFallback, setIncludeLlmFallback] = React.useState(true); // default enabled
+    const [llmMode, setLlmMode] = React.useState('rag-with-fallback'); // 'rag-only', 'rag-with-fallback', 'pure-llm'
 
     const sendMessage = async (e) => {
         e.preventDefault();
@@ -15,7 +15,11 @@ function ChatApp() {
             const res = await fetch("/api/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: input, includeLlmFallback })
+                body: JSON.stringify({ 
+                    message: input, 
+                    includeLlmFallback: llmMode === 'rag-with-fallback',
+                    usePureLlm: llmMode === 'pure-llm'
+                })
             });
             const data = await res.json();
             setMessages(msgs => [
@@ -65,26 +69,36 @@ function ChatApp() {
                     )
                 ),
                 React.createElement("div", { className: "llm-options-box" },
-                    React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "LLM Fallback Options"),
+                    React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "Response Mode"),
                     React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.96em' } },
                         React.createElement("input", {
                             type: "radio",
-                            name: "llmFallback",
-                            checked: includeLlmFallback,
-                            onChange: () => setIncludeLlmFallback(true),
+                            name: "llmMode",
+                            checked: llmMode === 'rag-only',
+                            onChange: () => setLlmMode('rag-only'),
                             style: { marginRight: 4 }
                         }),
-                        "Include LLM response"
+                        "RAG Only"
+                    ),
+                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.96em' } },
+                        React.createElement("input", {
+                            type: "radio",
+                            name: "llmMode",
+                            checked: llmMode === 'rag-with-fallback',
+                            onChange: () => setLlmMode('rag-with-fallback'),
+                            style: { marginRight: 4 }
+                        }),
+                        "RAG with LLM Fallback"
                     ),
                     React.createElement("label", { style: { display: "block", fontSize: '0.96em' } },
                         React.createElement("input", {
                             type: "radio",
-                            name: "llmFallback",
-                            checked: !includeLlmFallback,
-                            onChange: () => setIncludeLlmFallback(false),
+                            name: "llmMode",
+                            checked: llmMode === 'pure-llm',
+                            onChange: () => setLlmMode('pure-llm'),
                             style: { marginRight: 4 }
                         }),
-                        "Only use RAG context"
+                        "Pure LLM (No RAG)"
                     )
                 )
             )

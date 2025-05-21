@@ -5,16 +5,51 @@ RAGUI is a Spring Boot service that acts as a front end (API gateway and orchest
 ## Features
 
 - **Retrieval-Augmented Generation (RAG):** Uses a vector store (PgVector) to retrieve relevant context for user queries.
-- **LLM Fallback:** If no relevant context is found, the system falls back to the base LLM (Ollama) for a general answer.
+- **Multiple Response Modes:** Choose from three response strategies:
+  - **RAG Only:** Only uses context from the vector store
+  - **RAG with LLM Fallback:** Uses vector store first, falls back to LLM if needed
+  - **Pure LLM:** Bypasses the vector store entirely, using only the LLM's knowledge
 - **Spring AI Integration:** Leverages Spring AI's advisor and client abstractions for clean, modular code.
 - **Configurable Retrieval:** Easily adjust similarity thresholds and top-K retrieval parameters.
 - **RESTful API:** Designed for easy integration with frontends or other services.
 
 ## How It Works
 
-1. **User sends a chat request** to the backend.
-2. **RagService** attempts to answer using context retrieved from the vector store via the `QuestionAnswerAdvisor` (RAG).
-3. If the advisor returns no relevant answer (e.g., "I don't know"), the service automatically **falls back to the base LLM** to generate an answer using its own knowledge.
+1. **User sends a chat request** to the backend, optionally specifying `includeLlmFallback`.
+2. **RagService** attempts to answer using context retrieved from the vector store via the `RetrievalAugmentationAdvisor` (RAG).
+3. If the advisor returns no relevant answer (e.g., "I don't know"), and LLM fallback is enabled, the service automatically **falls back to the base LLM** to generate an answer using its own knowledge.
+
+## Response Modes
+
+### 1. RAG Only
+- Uses only the context retrieved from the vector store
+- Returns answers only if relevant context is found
+- Most accurate but may not answer all questions
+
+### 2. RAG with LLM Fallback (Default)
+- First tries to answer using vector store context
+- If no relevant context is found, falls back to the LLM
+- Provides the best balance of accuracy and coverage
+
+### 3. Pure LLM
+- Bypasses the vector store entirely
+- Uses only the LLM's pre-trained knowledge
+- Fastest response time but lacks your custom data context
+
+### UI Controls
+- The chat interface includes radio buttons to select the desired response mode
+- The selected mode is clearly indicated
+- Response source (RAG or LLM) is shown with each answer
+
+### API Usage
+Control the behavior via the API using these request body parameters:
+- `usePureLlm`: Set to `true` to bypass RAG and use only the LLM
+- `includeLlmFallback`: Set to `true` to allow fallback to LLM when using RAG mode
+
+## Screenshot
+
+![Chat UI with Response Mode Selection](docs/screenshot-ui-response-modes.png)
+*The chat interface showing the three response mode options*
 
 ## Key Classes
 
