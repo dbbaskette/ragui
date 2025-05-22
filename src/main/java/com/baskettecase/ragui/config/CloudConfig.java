@@ -2,9 +2,7 @@ package com.baskettecase.ragui.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.cloud.cloudfoundry.CloudFoundryVcapEnvironmentPostProcessor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -44,8 +42,7 @@ public class CloudConfig {
                             propertyName.contains("postgres") || 
                             propertyName.contains("uri") || 
                             propertyName.contains("url") ||
-                            propertyName.contains("ai") ||
-                            propertyName.contains("ollama")) {
+                            propertyName.contains("ai")) {
                             
                             String displayName = propertyName
                                 .replace("vcap.services.", "")
