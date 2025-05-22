@@ -1,0 +1,18 @@
+---
+applications:
+- name: ragui
+  random-route: true
+  path: target/ragui-0.0.1-SNAPSHOT.jar
+  memory: 2G
+  disk_quota: 2G
+  instances: 1
+  buildpacks:
+    - java_buildpack
+  env:
+    JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+    SPRING_PROFILES_ACTIVE: cloud
+    JVM_HEAP_RATIO: 0.5
+    JAVA_OPTS: '-Xmx1024m -Xss512k -XX:ReservedCodeCacheSize=512M -XX:MaxMetaspaceSize=512M'
+  services:
+    - ragui-db
+    - ai-service
