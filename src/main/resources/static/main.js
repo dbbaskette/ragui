@@ -1,10 +1,44 @@
 const root = document.getElementById('root');
 
+function ConfigPanel({ config, onClose }) {
+    if (!config) return null;
+    
+    return React.createElement("div", { className: "config-panel-overlay" },
+        React.createElement("div", { className: "config-panel" },
+            React.createElement("div", { className: "config-header" },
+                React.createElement("h3", null, "Configuration"),
+                React.createElement("button", { 
+                    onClick: onClose, 
+                    className: "close-btn"
+                }, "×")
+            ),
+            React.createElement("div", { className: "config-content" },
+                Object.entries(config).map(([key, value]) =>
+                    React.createElement("div", { key: key, className: "config-item" },
+                        React.createElement("span", { className: "config-key" }, key + ":"),
+                        React.createElement("span", { className: "config-value" }, String(value))
+                    )
+                )
+            )
+        )
+    );
+}
+
 function ChatApp() {
     const [input, setInput] = React.useState("");
     const [messages, setMessages] = React.useState([]);
     const [loading, setLoading] = React.useState(false);
     const [llmMode, setLlmMode] = React.useState('rag-with-fallback'); // 'rag-only', 'rag-with-fallback', 'pure-llm'
+    const [showConfig, setShowConfig] = React.useState(false);
+    const [config, setConfig] = React.useState(null);
+    
+    // Fetch configuration when component mounts
+    React.useEffect(() => {
+        fetch("/api/config/properties")
+            .then(res => res.json())
+            .then(data => setConfig(data))
+            .catch(err => console.error("Failed to load config:", err));
+    }, []);
 
     const sendMessage = async (e) => {
         e.preventDefault();
@@ -41,8 +75,21 @@ function ChatApp() {
         if (el) el.scrollTop = el.scrollHeight;
     }, [messages]);
 
-    return (
+    return React.createElement("div", { className: "app-container" },
+        showConfig && 
+        React.createElement(ConfigPanel, { 
+            config: config, 
+            onClose: () => setShowConfig(false) 
+        }),
         React.createElement("div", { className: "chat-container" },
+            React.createElement("div", { className: "chat-header" },
+                React.createElement("h1", null, "RAG UI Chat"),
+                React.createElement("button", { 
+                    className: "config-btn",
+                    onClick: () => setShowConfig(true),
+                    title: "Show Configuration"
+                }, "⚙️")
+            ),
             React.createElement("div", { className: "response-box" },
                 messages.length === 0
                     ? React.createElement("div", { className: "placeholder" }, "Responses will appear here.")
@@ -105,6 +152,71 @@ function ChatApp() {
         )
     );
 }
+
+// Add styles for the config panel
+const style = document.createElement('style');
+style.textContent = `
+    .app-container {
+        position: relative;
+        height: 100vh;
+    }
+    .config-panel-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+    .config-panel {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        width: 80%;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+    .config-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    .close-btn {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+    }
+    .config-item {
+        margin: 10px 0;
+        padding: 10px;
+        background: #f5f5f5;
+        border-radius: 4px;
+        word-break: break-all;
+    }
+    .config-key {
+        font-weight: bold;
+        margin-right: 10px;
+    }
+    .config-btn {
+        background: none;
+        border: none;
+        font-size: 20px;
+        cursor: pointer;
+        padding: 5px 10px;
+        border-radius: 4px;
+    }
+    .config-btn:hover {
+        background: #f0f0f0;
+    }
+`;
+document.head.appendChild(style);
 
 // Load React from CDN if not present
 (function loadReact() {
