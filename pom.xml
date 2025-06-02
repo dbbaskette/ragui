@@ -13,7 +13,7 @@
 
     <groupId>com.baskettecase</groupId>
     <artifactId>ragui</artifactId>
-    <version>0.0.8</version>
+    <version>0.0.9</version>
     <name>ragui</name>
     <description>Retrieval Augmented Generation UI with Spring AI, Ollama, and pgvector</description>
 
@@ -161,6 +161,22 @@
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
 		</plugins>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <includes>
+                    <include>version.properties</include>
+                </includes>
+                <filtering>true</filtering>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <exclude>version.properties</exclude>
+                </excludes>
+                <filtering>false</filtering>
+            </resource>
+        </resources>
 	</build>
 
 </project>
