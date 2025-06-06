@@ -24,11 +24,13 @@ public class JobController {
 
     @PostMapping("/job")
     public JobIdResponse submitJob(@RequestBody ChatRequest request) {
+        org.slf4j.LoggerFactory.getLogger(JobController.class).debug("/api/job received: {}", request);
         Job job = jobService.createJob();
         job.setStatus(Job.Status.QUEUED);
         // Async process
         executor.submit(() -> {
             job.setStatus(Job.Status.RUNNING);
+            org.slf4j.LoggerFactory.getLogger(JobController.class).debug("Job {} started", job.getJobId());
             try {
                 StringBuilder statusMsg = new StringBuilder();
                 var response = ragService.chat(request, (status, progress) -> {
@@ -37,9 +39,11 @@ public class JobController {
                 });
                 job.setResult(response.getAnswer());
                 job.setStatus(Job.Status.COMPLETED);
+                org.slf4j.LoggerFactory.getLogger(JobController.class).debug("Job {} completed", job.getJobId());
             } catch (Exception e) {
                 job.setError(e.getMessage());
                 job.setStatus(Job.Status.FAILED);
+                org.slf4j.LoggerFactory.getLogger(JobController.class).error("Job {} failed: {}", job.getJobId(), e.getMessage(), e);
             }
             jobService.updateJob(job);
         });
@@ -48,11 +52,13 @@ public class JobController {
 
     @GetMapping(value = "/events/{jobId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamJob(@PathVariable String jobId) {
+        org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE connection opened for job {}", jobId);
         SseEmitter emitter = new SseEmitter(0L);
         Job job = jobService.getJob(jobId);
         if (job == null) {
             try { emitter.send(SseEmitter.event().data("{\"error\":\"Job not found\"}")); } catch (IOException ignored) {}
             emitter.complete();
+            org.slf4j.LoggerFactory.getLogger(JobController.class).warn("Job {} not found for SSE", jobId);
             return emitter;
         }
         executor.submit(() -> {
@@ -67,10 +73,12 @@ public class JobController {
                     if (status == Job.Status.COMPLETED) {
                         emitter.send(SseEmitter.event().data("{\"response\":{\"text\":\"" + escape(job.getResult()) + "\"}}"));
                         emitter.complete();
+                        org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE completed for job {}", jobId);
                         break;
                     } else if (status == Job.Status.FAILED) {
                         emitter.send(SseEmitter.event().data("{\"error\":\"" + escape(job.getError()) + "\"}"));
                         emitter.complete();
+                        org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE failed for job {}", jobId);
                         break;
                     }
                     Thread.sleep(500);
@@ -78,6 +86,7 @@ public class JobController {
             } catch (Exception e) {
                 try { emitter.send(SseEmitter.event().data("{\"error\":\"" + escape(e.getMessage()) + "\"}")); } catch (IOException ignored) {}
                 emitter.complete();
+                org.slf4j.LoggerFactory.getLogger(JobController.class).error("SSE error for job {}: {}", jobId, e.getMessage(), e);
             }
         });
         return emitter;

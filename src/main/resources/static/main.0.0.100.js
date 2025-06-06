@@ -276,9 +276,8 @@ function ChatApp() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     message: input,
-                    ragOnly: llmMode === "rag-only",
-                    ragWithFallback: llmMode === "rag-with-fallback",
-                    pureLlm: llmMode === "pure-llm",
+                    includeLlmFallback: llmMode === "rag-with-fallback",
+                    usePureLlm: llmMode === "pure-llm",
                     rawRag: llmMode === "raw-rag"
                 })
             });
@@ -665,6 +664,26 @@ style.textContent = `
     }
     .config-btn:hover {
         background: #f0f0f0;
+    }
+    .connection-info-bar {
+        background: linear-gradient(90deg, #dbeafe 0%, #f1f7ff 100%);
+        border: 2px solid #4b6cb7;
+        box-shadow: 0 2px 14px #bcd6f7cc, 0 1px 6px #4b6cb733;
+        border-radius: 12px;
+        padding: 14px 20px 10px 20px;
+        margin: 12px 0 20px 0;
+        font-size: 0.97em;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        max-width: 98vw;
+    }
+    .connection-info-item {
+        font-size: 0.97em;
+        line-height: 1.5;
+        color: #253f5d;
+        padding-bottom: 1px;
+        word-break: break-word;
     }
 `;
 document.head.appendChild(style);
