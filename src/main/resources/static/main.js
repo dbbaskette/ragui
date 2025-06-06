@@ -53,64 +53,51 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
     );
 }
 
-function StatusPanel() {
-    const [status, setStatus] = React.useState(null);
-    const [error, setError] = React.useState(null);
-    React.useEffect(() => {
-        fetch("/api/status")
-            .then(res => res.json())
-            .then(setStatus)
-            .catch(err => setError("Failed to load status: " + err));
-    }, []);
-    if (error) return React.createElement("div", { className: "status-panel error" }, error);
-    if (!status) return React.createElement("div", { className: "status-panel loading" }, "Loading status...");
-
-    // Defensive: handle legacy/simple status shape
-    if (!status.database && !status.models && status.status) {
-        return React.createElement("div", { className: "status-panel" },
-            React.createElement("div", { className: "status-section" },
-                React.createElement("strong", null, "Status: "),
-                React.createElement("span", null, status.status)
-            )
-        );
+function ConnectionInfoBar({ config }) {
+    if (!config) return null;
+    // Extract DB info
+    let dbUrl = config["spring.datasource.url"] || config["database.uri"] || config["database.url"] || "";
+    let dbHost = "?", dbPort = "?", dbType = "?";
+    if (dbUrl) {
+        try {
+            // Remove jdbc: prefix if present
+            let url = dbUrl.replace(/^jdbc:/, "");
+            let parsed = new URL(url);
+            dbHost = parsed.hostname;
+            dbPort = parsed.port || (parsed.protocol === "postgres:" ? "5432" : "?");
+            dbType = parsed.protocol.replace(":", "");
+        } catch (e) {
+            // fallback: try to parse manually
+            let m = dbUrl.match(/([\w+]+):\/\/([^:/]+)(?::(\d+))?/);
+            if (m) {
+                dbType = m[1];
+                dbHost = m[2];
+                dbPort = m[3] || "?";
+            }
+        }
     }
-    // Defensive: fallback if structure is unexpected
-    if (!status.database || !status.models) {
-        return React.createElement("div", { className: "status-panel error" },
-            "Status data is unavailable or malformed."
-        );
-    }
-    return React.createElement("div", { className: "status-panel" },
-        React.createElement("div", { className: "status-section" },
+    // Extract model info
+    let chatModel = config["spring.ai.ollama.chat.model"] || config["spring.ai.openai.chat.model"] || config["chat.model"] || "?";
+    let embedModel = config["spring.ai.ollama.embedding.model"] || config["spring.ai.openai.embedding.model"] || config["embedding.model"] || "?";
+    // Connection status (simulate OK if present, error if missing)
+    let dbStatus = dbUrl ? "OK" : "Error";
+    let chatStatus = chatModel && chatModel !== "?" ? "OK" : "Error";
+    let embedStatus = embedModel && embedModel !== "?" ? "OK" : "Error";
+    return React.createElement("div", { className: "connection-info-bar" },
+        React.createElement("span", { style: { marginRight: 24 } },
             React.createElement("strong", null, "Database: "),
-            React.createElement("span", { className: status.database.status === "OK" ? "ok" : "error" },
-                status.database.type, " - ", status.database.status,
-                status.database.details ? ` (${status.database.details})` : ""
-            )
+            `${dbType}://${dbHost}:${dbPort} `,
+            React.createElement("span", { className: dbStatus === "OK" ? "ok" : "error" }, dbStatus)
         ),
-        React.createElement("div", { className: "status-section" },
-            React.createElement("strong", null, "Models: "),
-            status.models && status.models.length > 0 ?
-                status.models.map((model, i) =>
-                    React.createElement("span", { key: i, className: model.status === "OK" ? "ok" : "error", style: { marginRight: 8 } },
-                        model.name,
-                        model.modelName ? ` (${model.modelName})` : "",
-                        " - ", model.status,
-                        model.details ? ` (${model.details})` : ""
-                    )
-                ) : React.createElement("span", { className: "error" }, "No models configured")
-        )
-    );
-}
-
-function StatusLogPanel({ statusLog }) {
-    return (
-        React.createElement("div", { className: "status-log-panel" },
-            statusLog.length === 0
-                ? React.createElement("div", { className: "status-log-entry" }, "No status messages yet.")
-                : statusLog.map((msg, idx) => (
-                    React.createElement("div", { key: idx, className: "status-log-entry" }, msg)
-                ))
+        React.createElement("span", { style: { marginRight: 24 } },
+            React.createElement("strong", null, "Chat Model: "),
+            chatModel, " ",
+            React.createElement("span", { className: chatStatus === "OK" ? "ok" : "error" }, chatStatus)
+        ),
+        React.createElement("span", { style: { marginRight: 24 } },
+            React.createElement("strong", null, "Embedding Model: "),
+            embedModel, " ",
+            React.createElement("span", { className: embedStatus === "OK" ? "ok" : "error" }, embedStatus)
         )
     );
 }
