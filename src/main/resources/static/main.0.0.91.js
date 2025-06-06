@@ -55,50 +55,14 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
 
 function ConnectionInfoBar({ config }) {
     if (!config) return null;
-    // Extract DB info
-    let dbUrl = config["spring.datasource.url"] || config["database.uri"] || config["database.url"] || "";
-    let dbHost = "?", dbPort = "?", dbType = "?";
-    if (dbUrl) {
-        try {
-            // Remove jdbc: prefix if present
-            let url = dbUrl.replace(/^jdbc:/, "");
-            let parsed = new URL(url);
-            dbHost = parsed.hostname;
-            dbPort = parsed.port || (parsed.protocol === "postgres:" ? "5432" : "?");
-            dbType = parsed.protocol.replace(":", "");
-        } catch (e) {
-            // fallback: try to parse manually
-            let m = dbUrl.match(/([\w+]+):\/\/([^:/]+)(?::(\d+))?/);
-            if (m) {
-                dbType = m[1];
-                dbHost = m[2];
-                dbPort = m[3] || "?";
-            }
-        }
-    }
-    // Extract model info
-    let chatModel = config["spring.ai.ollama.chat.model"] || config["spring.ai.openai.chat.model"] || config["chat.model"] || "?";
-    let embedModel = config["spring.ai.ollama.embedding.model"] || config["spring.ai.openai.embedding.model"] || config["embedding.model"] || "?";
-    // Connection status (simulate OK if present, error if missing)
-    let dbStatus = dbUrl ? "OK" : "Error";
-    let chatStatus = chatModel && chatModel !== "?" ? "OK" : "Error";
-    let embedStatus = embedModel && embedModel !== "?" ? "OK" : "Error";
+    // Use new config keys
+    let dbPlan = config["embed-db.plan"] || "?";
+    let chatModel = config["chat-model.model_name"] || "?";
+    let embedModel = config["embed-model.model_name"] || "?";
     return React.createElement("div", { className: "connection-info-bar" },
-        React.createElement("span", { style: { marginRight: 24 } },
-            React.createElement("strong", null, "Database: "),
-            `${dbType}://${dbHost}:${dbPort} `,
-            React.createElement("span", { className: dbStatus === "OK" ? "ok" : "error" }, dbStatus)
-        ),
-        React.createElement("span", { style: { marginRight: 24 } },
-            React.createElement("strong", null, "Chat Model: "),
-            chatModel, " ",
-            React.createElement("span", { className: chatStatus === "OK" ? "ok" : "error" }, chatStatus)
-        ),
-        React.createElement("span", { style: { marginRight: 24 } },
-            React.createElement("strong", null, "Embedding Model: "),
-            embedModel, " ",
-            React.createElement("span", { className: embedStatus === "OK" ? "ok" : "error" }, embedStatus)
-        )
+        React.createElement("span", { style: { marginRight: 24 } }, `Database Plan: ${dbPlan}`),
+        React.createElement("span", { style: { marginRight: 24 } }, `Chat Model: ${chatModel}`),
+        React.createElement("span", null, `Embedding Model: ${embedModel}`)
     );
 }
 
