@@ -82,6 +82,13 @@ fi
 JS_DST="$STATIC_DIR/$JS_BASENAME.$new_version.js"
 cp "$JS_SRC" "$JS_DST"
 echo "Copied $JS_SRC to $JS_DST"
+# Remove all other main.*.js files except the new one
+for jsfile in "$STATIC_DIR"/main.*.js; do
+  if [[ "$jsfile" != "$JS_DST" ]]; then
+    rm "$jsfile"
+    echo "Removed old bundle: $jsfile"
+  fi
+done
 # Robustly update index.html to reference the new JS file
 if grep -qE '<script src="main\.[^\"]*\.js"></script>' "$INDEX_HTML"; then
   sed -i.bak 's|<script src="main\.[^\"]*\.js"></script>|<script src="main.'"$new_version"'.js"></script>|g' "$INDEX_HTML"

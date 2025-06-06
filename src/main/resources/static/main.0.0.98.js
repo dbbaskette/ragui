@@ -35,7 +35,7 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
             ),
             React.createElement("div", { className: "config-version" },
                 React.createElement("strong", null, "App Version: "),
-                React.createElement("span", { className: "config-value" }, version || "unknown")
+                React.createElement("span", { className: "config-value" }, (config && config["app.version"]) || version || "unknown")
             ),
             React.createElement("div", { className: "config-last-prompt" },
                 React.createElement("strong", null, "Last prompt: "),
@@ -262,7 +262,7 @@ function ChatApp() {
             const updated = [
                 ...msgs,
                 { sender: "user", text: input },
-                { sender: "llm", text: "AI is thinking...", spinner: true }
+                { sender: "llm", text: "Waiting...", spinner: true }
             ];
             console.log("After user message:", updated);
             return updated;
@@ -621,13 +621,16 @@ style.textContent = `
         z-index: 1000;
     }
     .config-panel {
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        width: 80%;
-        max-width: 600px;
-        max-height: 80vh;
+        background: linear-gradient(135deg, #f7f7fa 0%, #dde6f7 100%);
+        border: 2.5px solid #4b6cb7;
+        box-shadow: 0 4px 32px rgba(60,80,180,0.21), 0 1.5px 8px #0001;
+        padding: 28px 28px 18px 28px;
+        border-radius: 16px;
+        width: 84%;
+        max-width: 620px;
+        max-height: 82vh;
         overflow-y: auto;
+        margin-top: 12px;
     }
     .config-header {
         display: flex;
