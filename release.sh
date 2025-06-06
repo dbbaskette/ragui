@@ -8,8 +8,10 @@ set -e
 git_branch=$(git rev-parse --abbrev-ref HEAD)
 echo "Current git branch: $git_branch"
 
-# 2. Get current version from pom.xml
-current_version=$(xmllint --xpath 'string(//_:project/_:version)' pom.xml 2>/dev/null || grep -m1 '<version>' pom.xml | sed -E 's/.*<version>([^<]+)<\/version>.*/\1/')
+# 2. Get the main artifactId and its version from pom.xml (not the parent)
+main_artifact_id=$(awk -F'[<>]' '/<artifactId>/{print $3; exit}' pom.xml)
+current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; if ($0 ~ /<version>/) {gsub(/.*<version>|<\/version>.*/, ""); print $0}}' pom.xml)
+echo "Main artifactId: $main_artifact_id"
 echo "Current version: $current_version"
 
 # 3. Increment patch version (x.y.z -> x.y.$((z+1)))
@@ -22,9 +24,20 @@ next_patch=$((patch+1))
 new_version="$major.$minor.$next_patch"
 echo "Bumping version to: $new_version"
 
-# 4. Update pom.xml version
-sed -i.bak "0,/<version>$current_version<\\/version>/s//<version>$new_version<\\/version>/" pom.xml
-rm pom.xml.bak
+# 4. Update only the correct <version> tag in pom.xml
+awk -v aid="$main_artifact_id" -v newver="$new_version" '
+  BEGIN {found=0}
+  /<artifactId>/ && $0 ~ aid {
+    found=1
+    print
+    next
+  }
+  found && /<version>/ {
+    sub(/<version>[^<]+<\/version>/, "<version>" newver "</version>")
+    found=0
+  }
+  {print}
+' pom.xml > pom.xml.tmp && mv pom.xml.tmp pom.xml
 
 echo "pom.xml updated."
 
