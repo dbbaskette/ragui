@@ -21,4 +21,10 @@ public class ConfigController {
     public Map<String, Object> getConfigProperties() {
         return cloudConfig.getImportantProperties();
     }
+
+    // Add /api/config endpoint for frontend compatibility
+    @GetMapping
+    public Map<String, Object> getConfig() {
+        return cloudConfig.getImportantProperties();
+    }
 }

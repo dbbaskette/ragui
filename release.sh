@@ -65,6 +65,29 @@ awk -v aid="$main_artifact_id" -v newver="$new_version" '
 
 echo "pom.xml updated."
 
+# 4b. Rename main.js to main.$new_version.js and update index.html
+STATIC_DIR="src/main/resources/static"
+JS_BASENAME="main"
+JS_SRC="$STATIC_DIR/$JS_BASENAME.js"
+JS_DST="$STATIC_DIR/$JS_BASENAME.$new_version.js"
+INDEX_HTML="$STATIC_DIR/index.html"
+
+# Use main1.js if main.js does not exist (for recovery/testing)
+if [[ ! -f "$JS_SRC" && -f "$STATIC_DIR/${JS_BASENAME}1.js" ]]; then
+  JS_SRC="$STATIC_DIR/${JS_BASENAME}1.js"
+fi
+
+if [[ -f "$JS_SRC" ]]; then
+  cp "$JS_SRC" "$JS_DST"
+  echo "Copied $JS_SRC to $JS_DST"
+  # Update index.html to reference the new JS file
+  sed -i.bak "s|<script src=\"$JS_BASENAME[0-9.]*.js\"></script>|<script src=\"$JS_BASENAME.$new_version.js\"></script>|g" "$INDEX_HTML"
+  rm "$INDEX_HTML.bak"
+  echo "Updated $INDEX_HTML to reference $JS_BASENAME.$new_version.js"
+else
+  echo "Warning: $JS_SRC not found, skipping JS versioning."
+fi
+
 # 5. Git add, commit, push
 git add pom.xml
 
