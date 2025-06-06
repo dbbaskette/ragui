@@ -102,6 +102,22 @@ function ConnectionInfoBar({ config }) {
     );
 }
 
+// StatusLogPanel: shows backend status/progress messages at the bottom
+function StatusLogPanel({ statusLog }) {
+    if (!statusLog || statusLog.length === 0) return null;
+    return React.createElement(
+        "div",
+        { className: "status-log-panel" },
+        statusLog.map((msg, i) =>
+            React.createElement(
+                "div",
+                { key: i, className: "status-log-entry" },
+                msg
+            )
+        )
+    );
+}
+
 function ChatApp() {
     const [statusLog, setStatusLog] = React.useState([]);
     const [jobId, setJobId] = React.useState(null); // Track current jobId for SSE
@@ -449,22 +465,6 @@ function ChatApp() {
         )
     );
 
-}
-
-// StatusLogPanel: shows backend status/progress messages at the bottom
-function StatusLogPanel({ statusLog }) {
-    if (!statusLog || statusLog.length === 0) return null;
-    return React.createElement(
-        "div",
-        { className: "status-log-panel" },
-        statusLog.map((msg, i) =>
-            React.createElement(
-                "div",
-                { key: i, className: "status-log-entry" },
-                msg
-            )
-        )
-    );
 }
 
 // Add styles for the config and status panels
