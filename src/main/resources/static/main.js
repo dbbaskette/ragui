@@ -327,7 +327,7 @@ function ChatApp() {
     // Add version to config for display in the config list
     const configWithVersion = config ? { ...config, "app.version": version } : config;
     return React.createElement("div", { className: "app-container" },
-        React.createElement(StatusPanel, null),
+        React.createElement(ConnectionInfoBar, { config }),
         React.createElement(StatusLogPanel, { statusLog }),
         showConfig && React.createElement(ConfigPanel, { config: configWithVersion, version, onClose: () => setShowConfig(false), lastPrompt }),
         React.createElement("div", { className: "chat-container" },
