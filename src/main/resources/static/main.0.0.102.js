@@ -83,6 +83,14 @@ function StatusLogPanel({ statusLog }) {
 }
 
 function ChatApp() {
+    // Always show app title at the top
+    const appTitleBar = React.createElement("div", { className: "chat-header" },
+        React.createElement("h2", null, "Tanzu RAG Chat"),
+        React.createElement("button", {
+            className: "config-btn",
+            onClick: () => setShowConfig(true)
+        }, "⚙")
+    );
     const [statusLog, setStatusLog] = React.useState([]);
     const [jobId, setJobId] = React.useState(null); // Track current jobId for SSE
 
@@ -123,7 +131,7 @@ function ChatApp() {
             setShowRetry(true);
             console.log("[SSE] Timeout fired (frontend)");
         }, 185000); // 185 seconds (3 min 5 sec)
-        const es = new EventSource(`/api/chat/job/subscribe/${jobId}`);
+        const es = new EventSource(`/api/events/${jobId}`);
         console.log("[SSE] Connection opened for jobId", jobId);
         es.onopen = () => {
             console.log("[SSE] onopen");

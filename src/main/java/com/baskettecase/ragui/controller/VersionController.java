@@ -13,7 +13,7 @@ public class VersionController {
     @GetMapping("/version")
     public Map<String, String> getVersion() {
         Map<String, String> version = new HashMap<>();
-        version.put("version", "0.0.60"); // Update if you want to fetch dynamically
+        version.put("version", "0.0.101"); // Update if you want to fetch dynamically
         return version;
     }
 }
