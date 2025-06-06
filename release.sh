@@ -68,28 +68,27 @@ echo "pom.xml updated."
 # 4b. Rename main.js to main.$new_version.js and update index.html
 STATIC_DIR="src/main/resources/static"
 JS_BASENAME="main"
-JS_SRC="$STATIC_DIR/$JS_BASENAME.js"
-JS_DST="$STATIC_DIR/$JS_BASENAME.$new_version.js"
 INDEX_HTML="$STATIC_DIR/index.html"
 
-# Use main1.js if main.js does not exist (for recovery/testing)
-if [[ ! -f "$JS_SRC" && -f "$STATIC_DIR/${JS_BASENAME}1.js" ]]; then
-  JS_SRC="$STATIC_DIR/${JS_BASENAME}1.js"
+# Find the latest main.*.js file (excluding already-versioned ones if possible)
+JS_SRC=$(ls -1t "$STATIC_DIR"/main.*.js 2>/dev/null | head -n1)
+
+if [[ -z "$JS_SRC" ]]; then
+  echo "No main.js or main.*.js file found in $STATIC_DIR"
+  echo "Build your frontend to generate a JS bundle before running release."
+  exit 1
 fi
 
-if [[ -f "$JS_SRC" ]]; then
-  cp "$JS_SRC" "$JS_DST"
-  echo "Copied $JS_SRC to $JS_DST"
-  # Robustly update index.html to reference the new JS file
-  if grep -qE '<script src="main\.[^"]*\.js"></script>' "$INDEX_HTML"; then
-    sed -i.bak 's|<script src="main\.[^"]*\.js"></script>|<script src="main.'"$new_version"'.js"></script>|g' "$INDEX_HTML"
-    rm "$INDEX_HTML.bak"
-    echo "Updated $INDEX_HTML to reference main.$new_version.js"
-  else
-    echo "Warning: Could not find <script src=\"main.*.js\"></script> in $INDEX_HTML. Please update manually."
-  fi
+JS_DST="$STATIC_DIR/$JS_BASENAME.$new_version.js"
+cp "$JS_SRC" "$JS_DST"
+echo "Copied $JS_SRC to $JS_DST"
+# Robustly update index.html to reference the new JS file
+if grep -qE '<script src="main\.[^\"]*\.js"></script>' "$INDEX_HTML"; then
+  sed -i.bak 's|<script src="main\.[^\"]*\.js"></script>|<script src="main.'"$new_version"'.js"></script>|g' "$INDEX_HTML"
+  rm "$INDEX_HTML.bak"
+  echo "Updated $INDEX_HTML to reference main.$new_version.js"
 else
-  echo "Warning: $JS_SRC not found, skipping JS versioning."
+  echo "Warning: Could not find <script src=\"main.*.js\"></script> in $INDEX_HTML. Please update manually."
 fi
 
 # 5. Git add, commit, push
