@@ -60,9 +60,9 @@ function ConnectionInfoBar({ config }) {
     let chatModel = config["chat-model.model_name"] || "?";
     let embedModel = config["embed-model.model_name"] || "?";
     return React.createElement("div", { className: "connection-info-bar" },
-        React.createElement("span", { style: { marginRight: 24 } }, `Database Plan: ${dbPlan}`),
-        React.createElement("span", { style: { marginRight: 24 } }, `Chat Model: ${chatModel}`),
-        React.createElement("span", null, `Embedding Model: ${embedModel}`)
+        React.createElement("div", { className: "connection-info-item" }, `Database Plan: ${dbPlan}`),
+        React.createElement("div", { className: "connection-info-item" }, `Chat Model: ${chatModel}`),
+        React.createElement("div", { className: "connection-info-item" }, `Embedding Model: ${embedModel}`)
     );
 }
 
@@ -270,26 +270,26 @@ function ChatApp() {
         setLastPrompt(input); // Track last user prompt
         setInput("");
         try {
-            // Submit job
-            const res = await fetch("/api/chat/job", {
+            // Submit job to new backend API
+            const response = await fetch("/api/job", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    message: input, 
-                    includeLlmFallback: llmMode === 'rag-with-fallback',
-                    usePureLlm: llmMode === 'pure-llm',
-                    rawRag: llmMode === 'raw-rag'
+                body: JSON.stringify({
+                    message: input,
+                    ragOnly: llmMode === "rag-only",
+                    ragWithFallback: llmMode === "rag-with-fallback",
+                    pureLlm: llmMode === "pure-llm",
+                    rawRag: llmMode === "raw-rag"
                 })
             });
-            const { jobId } = await res.json();
-            if (!jobId) throw new Error("No jobId returned from backend");
-            setJobId(jobId); // Triggers SSE useEffect to handle status/progress
-        // Client-side timeout is handled in SSE effect above
-            setMessages(msgs => {
-                const updated = [...msgs, { sender: "llm", text: "(Waiting for AI response...)", spinner: true }];
-                console.log("After spinner message:", updated);
-                return updated;
-            });
+            if (!response.ok) throw new Error("Backend error: " + response.status);
+            const data = await response.json();
+            if (!data.jobId) {
+                throw new Error("No jobId returned from backend");
+            }
+            setJobId(data.jobId); // Triggers SSE useEffect to handle status/progress
+            // (No need to add extra spinner message here; already added above)
+
         } catch (err) {
             setMessages(msgs => [
                 ...msgs,
