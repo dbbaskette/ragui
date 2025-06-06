@@ -64,5 +64,19 @@ git push origin "v$new_version"
 
 echo "Release tagged as v$new_version and pushed."
 
-# 7. Done
+# 7. Optionally build and deploy to Cloud Foundry
+
+echo -n "Would you like to build the new JAR and push to Cloud Foundry? [y/N]: "
+read deploy_answer
+if [[ "$deploy_answer" =~ ^[Yy]$ ]]; then
+  echo "Building JAR with mvn clean package..."
+  mvn clean package
+  echo "Updating manifest.yml with new JAR path: target/ragui-$new_version.jar"
+  sed -i.bak "s|path: .*|path: target/ragui-$new_version.jar|" manifest.yml && rm manifest.yml.bak
+  echo "Pushing to Cloud Foundry..."
+  cf push
+else
+  echo "Skipping build and Cloud Foundry deployment."
+fi
+
 echo "Release process complete."
