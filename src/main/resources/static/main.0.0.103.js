@@ -168,10 +168,11 @@ function ChatApp() {
                         console.log("After AI message (message):", updated);
                         return updated;
                     });
-                } else if (data.response && data.response.answer) {
+                } else if (data.response && (data.response.answer || data.response.text)) {
                     setMessages(msgs => {
-                        const updated = [...msgs.filter(m => !m.spinner), { sender: "llm", text: data.response.answer, spinner: false }];
-                        console.log("After AI message (response.answer):", updated);
+                        const answer = data.response.answer || data.response.text;
+                        const updated = [...msgs.filter(m => !m.spinner), { sender: "llm", text: answer, spinner: false }];
+                        console.log("After AI message (response):", updated);
                         return updated;
                     });
                 }
