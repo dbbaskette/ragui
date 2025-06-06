@@ -9,8 +9,9 @@ git_branch=$(git rev-parse --abbrev-ref HEAD)
 echo "Current git branch: $git_branch"
 
 # 2. Get the main artifactId and its version from pom.xml (not the parent)
-main_artifact_id=$(awk -F'[<>]' '/<artifactId>/{print $3; exit}' pom.xml)
-current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; if ($0 ~ /<version>/) {gsub(/.*<version>|<\/version>.*/, ""); print $0}}' pom.xml)
+main_artifact_id="ragui"
+# Find the <version> that comes immediately after <artifactId>ragui</artifactId>
+current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; while (!/<version>/) getline; gsub(/.*<version>|<\/version>.*/, ""); print $0; exit}' pom.xml)
 echo "Main artifactId: $main_artifact_id"
 echo "Current version: $current_version"
 
@@ -24,7 +25,14 @@ next_patch=$((patch+1))
 new_version="$major.$minor.$next_patch"
 echo "Bumping version to: $new_version"
 
-# 4. Update only the correct <version> tag in pom.xml
+echo -n "Proceed with release v$new_version? [y/N]: "
+read answer
+if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+  echo "Aborted by user. No changes made."
+  exit 0
+fi
+
+# 4. Update only the correct <version> tag in pom.xml (the one after <artifactId>ragui</artifactId>)
 awk -v aid="$main_artifact_id" -v newver="$new_version" '
   BEGIN {found=0}
   /<artifactId>/ && $0 ~ aid {
