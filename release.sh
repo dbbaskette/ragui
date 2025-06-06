@@ -80,10 +80,14 @@ fi
 if [[ -f "$JS_SRC" ]]; then
   cp "$JS_SRC" "$JS_DST"
   echo "Copied $JS_SRC to $JS_DST"
-  # Update index.html to reference the new JS file
-  sed -i.bak "s|<script src=\"$JS_BASENAME[0-9.]*.js\"></script>|<script src=\"$JS_BASENAME.$new_version.js\"></script>|g" "$INDEX_HTML"
-  rm "$INDEX_HTML.bak"
-  echo "Updated $INDEX_HTML to reference $JS_BASENAME.$new_version.js"
+  # Robustly update index.html to reference the new JS file
+  if grep -qE '<script src="main\.[^"]*\.js"></script>' "$INDEX_HTML"; then
+    sed -i.bak 's|<script src="main\.[^"]*\.js"></script>|<script src="main.'"$new_version"'.js"></script>|g' "$INDEX_HTML"
+    rm "$INDEX_HTML.bak"
+    echo "Updated $INDEX_HTML to reference main.$new_version.js"
+  else
+    echo "Warning: Could not find <script src=\"main.*.js\"></script> in $INDEX_HTML. Please update manually."
+  fi
 else
   echo "Warning: $JS_SRC not found, skipping JS versioning."
 fi
