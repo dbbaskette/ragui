@@ -64,6 +64,22 @@ function StatusPanel() {
     }, []);
     if (error) return React.createElement("div", { className: "status-panel error" }, error);
     if (!status) return React.createElement("div", { className: "status-panel loading" }, "Loading status...");
+
+    // Defensive: handle legacy/simple status shape
+    if (!status.database && !status.models && status.status) {
+        return React.createElement("div", { className: "status-panel" },
+            React.createElement("div", { className: "status-section" },
+                React.createElement("strong", null, "Status: "),
+                React.createElement("span", null, status.status)
+            )
+        );
+    }
+    // Defensive: fallback if structure is unexpected
+    if (!status.database || !status.models) {
+        return React.createElement("div", { className: "status-panel error" },
+            "Status data is unavailable or malformed."
+        );
+    }
     return React.createElement("div", { className: "status-panel" },
         React.createElement("div", { className: "status-section" },
             React.createElement("strong", null, "Database: "),
@@ -460,7 +476,7 @@ const style = document.createElement('style');
             const domScript = document.createElement('script');
             domScript.src = 'https://unpkg.com/react-dom@18/umd/react-dom.development.js';
             domScript.onload = () => {
-                ReactDOM.render(React.createElement(ChatApp), root);
+                ReactDOM.createRoot(root).render(React.createElement(ChatApp));
             };
             document.body.appendChild(domScript);
         };

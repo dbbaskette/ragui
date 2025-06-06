@@ -9,8 +9,24 @@ git_branch=$(git rev-parse --abbrev-ref HEAD)
 echo "Current git branch: $git_branch"
 
 # 2. Get the main artifactId and its version from pom.xml (not the parent)
-main_artifact_id="ragui"
-# Find the <version> that comes immediately after <artifactId>ragui</artifactId>
+# Auto-detect the main artifactId (first <artifactId> outside <parent> block)
+# Auto-detect the main artifactId (first <artifactId> outside <parent> block)
+main_artifact_id=$(awk '
+  /<parent>/ {in_parent=1}
+  /<\/parent>/ {in_parent=0; next}
+  in_parent {next}
+  /<artifactId>/ && !found {
+    print $0
+    found=1
+  }
+' pom.xml | sed -n 's:.*<artifactId>\([^<]*\)</artifactId>.*:\1:p')
+
+if [[ -z "$main_artifact_id" ]]; then
+  echo "Could not auto-detect main artifactId from pom.xml"
+  exit 1
+fi
+
+# Find the <version> that comes immediately after <artifactId>$main_artifact_id</artifactId>
 current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; while (!/<version>/) getline; gsub(/.*<version>|<\/version>.*/, ""); print $0; exit}' pom.xml)
 echo "Main artifactId: $main_artifact_id"
 echo "Current version: $current_version"
@@ -71,8 +87,8 @@ read deploy_answer
 if [[ "$deploy_answer" =~ ^[Yy]$ ]]; then
   echo "Building JAR with mvn clean package..."
   mvn clean package
-  echo "Updating manifest.yml with new JAR path: target/ragui-$new_version.jar"
-  sed -i.bak "s|path: .*|path: target/ragui-$new_version.jar|" manifest.yml && rm manifest.yml.bak
+  echo "Updating manifest.yml with new JAR path: target/${main_artifact_id}-$new_version.jar"
+  sed -i.bak "s|path: .*|path: target/${main_artifact_id}-$new_version.jar|" manifest.yml && rm manifest.yml.bak
   echo "Pushing to Cloud Foundry..."
   cf push
 else
