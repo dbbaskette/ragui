@@ -110,7 +110,8 @@ function ChatApp() {
         setLoading(true);
         setStatusLog([]);
         // Only remove spinner/progress messages, keep user prompt
-        setMessages(msgs => msgs.filter(m => !m.spinner));
+        // Do not remove spinner/progress messages here; only remove after completion.
+        // setMessages(msgs => msgs.filter(m => !m.spinner));
         setShowRetry(false);
         let didComplete = false;
         let didFail = false;
@@ -186,8 +187,8 @@ function ChatApp() {
                     clearTimeout(timeoutId);
                     setLoading(false);
                     setShowRetry(false); // Remove retry UI
-                    // Remove any retry/timeout error message from chat
-                    setMessages(msgs => msgs.filter(m => m.text !== "AI response interrupted or connection lost before completion." && m.text !== "Timed out waiting for response from backend."));
+                    // Remove spinner/progress and any retry/timeout error messages from chat
+                    setMessages(msgs => msgs.filter(m => !m.spinner && m.text !== "AI response interrupted or connection lost before completion." && m.text !== "Timed out waiting for response from backend."));
                     // Immediately close the SSE connection and mark as closed
                     es.close();
                     sseClosed = true;
@@ -219,7 +220,7 @@ function ChatApp() {
                 clearInterval(closeCheck);
                 return;
             }
-            if (sseClosed && !didComplete && !didFail) {
+            if (sseClosed && !didCompleteRef.current && !didFailRef.current) {
                 setStatusLog(log => [...log, "AI response interrupted or connection lost before completion."]);
                 setMessages(msgs => [
                     ...msgs.filter(m => !m.spinner),
