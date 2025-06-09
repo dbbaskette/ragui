@@ -164,12 +164,14 @@ function ChatApp() {
                 }
                 // Show AI response if present (either as 'message' or as 'response.answer')
                 if (data.message) {
+                    aiAnswerReceivedRef.current = true;
                     setMessages(msgs => {
                         const updated = [...msgs.filter(m => !m.spinner), { sender: data.sender || "llm", text: data.message, spinner: false }];
                         console.log("After AI message (message):", updated);
                         return updated;
                     });
                 } else if (data.response && (data.response.answer || data.response.text)) {
+                    aiAnswerReceivedRef.current = true;
                     setMessages(msgs => {
                         const answer = data.response.answer || data.response.text;
                         const updated = [...msgs.filter(m => !m.spinner), { sender: "llm", text: answer, spinner: false }];
@@ -214,10 +216,9 @@ function ChatApp() {
             if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
             setStatusLog(log => [...log, "SSE connection lost."]);
             setMessages(msgs => {
-                // Only show interruption message if last LLM message is still a spinner
+                // Only show interruption message if NO AI answer was ever received for this job
                 const filtered = msgs.filter(m => !m.spinner);
-                const lastMsg = msgs[msgs.length - 1];
-                if (lastMsg && lastMsg.spinner) {
+                if (!aiAnswerReceivedRef.current) {
                     return [
                         ...filtered,
                         { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
@@ -270,6 +271,7 @@ function ChatApp() {
 
     // Set page title and fetch configuration/version when component mounts
     React.useEffect(() => {
+        aiAnswerReceivedRef.current = false; // Reset for each new job
         document.title = "Tanzu RAG Chat";
         Promise.all([
             fetch("/api/config/properties").then(res => res.json()),
@@ -278,7 +280,7 @@ function ChatApp() {
             setConfig(config);
             setVersion(version);
         }).catch(err => console.error("Failed to load config/version:", err));
-    }, []);
+    }, [jobId]);
 
     // Send chat message and trigger SSE job status updates
     const sendMessage = async (e) => {
@@ -346,7 +348,7 @@ function ChatApp() {
                         'aria-label': "Tanzu Logo",
                         style: { height: 24, width: 'auto', display: 'inline-block', margin: 0, padding: 0 }
                     }),
-                    React.createElement("span", { style: { display: 'inline-block', verticalAlign: 'middle' } }, "Tanzu RAG UI Chat")
+                    React.createElement("span", { style: { display: 'inline-block', verticalAlign: 'middle' } }, "Tanzu RAG Chat")
                 ),
                 React.createElement("button", { 
                     className: "config-btn",
