@@ -4,7 +4,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import com.baskettecase.ragui.config.CloudFoundryAiConfig.AiServiceProperties;
 
 /**
  * AiConfig configures beans for Spring AI integration, including the ChatClient and related models.
@@ -12,11 +13,8 @@ import org.springframework.beans.factory.annotation.Value;
 @Configuration
 public class AiConfig {
 
-    @Value("${spring.ai.openai.api-key}")
-    private String apiKey;
-
-    @Value("${spring.ai.openai.chat.model:gpt-3.5-turbo}")
-    private String modelName;
+    @Autowired
+    private AiServiceProperties aiServiceProperties;
 
     @Bean
     public ChatClient chatClient(ChatModel chatModel) {
