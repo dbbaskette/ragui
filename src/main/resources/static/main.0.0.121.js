@@ -182,25 +182,6 @@ function ChatApp() {
     didComplete = true;
     didCompleteRef.current = true;
     if (data.status === "FAILED") {
-        didFail = true;
-        didFailRef.current = true;
-    }
-    clearTimeout(timeoutId);
-    setLoading(false);
-    setShowRetry(false); // Remove retry UI
-    // Remove spinner/progress and any retry/timeout/interruption error messages from chat
-    setMessages(msgs =>
-        msgs.filter(
-            m =>
-                !m.spinner &&
-                m.text !== "AI response interrupted or connection lost before completion." &&
-                m.text !== "Timed out waiting for response from backend."
-        )
-    );
-    // Immediately close the SSE connection and mark as closed
-    es.close();
-    sseClosed = true;
-}
                     didComplete = true;
                     didCompleteRef.current = true;
                     if (data.status === "FAILED") {
@@ -210,8 +191,15 @@ function ChatApp() {
                     clearTimeout(timeoutId);
                     setLoading(false);
                     setShowRetry(false); // Remove retry UI
-                    // Remove spinner/progress and any retry/timeout error messages from chat
-                    setMessages(msgs => msgs.filter(m => !m.spinner && m.text !== "AI response interrupted or connection lost before completion." && m.text !== "Timed out waiting for response from backend."));
+                    // Remove spinner/progress and any retry/timeout/interruption error messages from chat
+                    setMessages(msgs =>
+                        msgs.filter(
+                            m =>
+                                !m.spinner &&
+                                m.text !== "AI response interrupted or connection lost before completion." &&
+                                m.text !== "Timed out waiting for response from backend."
+                        )
+                    );
                     // Immediately close the SSE connection and mark as closed
                     es.close();
                     sseClosed = true;
@@ -511,7 +499,7 @@ const style = document.createElement('style');
         };
         document.body.appendChild(reactScript);
     } else {
-        ReactDOM.render(React.createElement(ChatApp), root);
+        ReactDOM.createRoot(root).render(React.createElement(ChatApp));
     }
 })();
 
