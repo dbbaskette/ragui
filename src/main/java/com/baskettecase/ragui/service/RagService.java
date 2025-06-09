@@ -33,7 +33,6 @@ import java.time.Instant;
  * and the includeLlmFallback flag is enabled, the service automatically falls back to the base language model (LLM)
  * to generate an answer using its own knowledge.
  */
-@org.springframework.stereotype.Service
 public class RagService {
     @org.springframework.beans.factory.annotation.Autowired
     private org.springframework.core.env.Environment springEnv; // For debug logging of base-url
