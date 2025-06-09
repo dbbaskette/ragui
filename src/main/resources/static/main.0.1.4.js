@@ -327,7 +327,7 @@ function ChatApp() {
                         'aria-label': "Tanzu Logo",
                         style: { height: 24, width: 'auto', display: 'inline-block', margin: 0, padding: 0 }
                     }),
-                    React.createElement("span", { style: { display: 'inline-block', verticalAlign: 'middle' } }, "Tanzu RAG UI Chat")
+                    React.createElement("span", { style: { display: 'inline-block', verticalAlign: 'middle' } }, "Tanzu RAG Chat")
                 ),
                 React.createElement("button", { 
                     className: "config-btn",

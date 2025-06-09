@@ -52,6 +52,11 @@ public class CloudConfig {
             }
         }
         
+        // Add specific logging for the chat model api_base
+        String chatModelApiBase = environment.getProperty("vcap.services.chat-model.credentials.api_base");
+        logger.info("VERIFYING CHAT MODEL API BASE: vcap.services.chat-model.credentials.api_base = '{}'", chatModelApiBase);
+        logger.info(""); // Add a blank line for readability
+
         logger.info("===== Important Configuration =====");
         importantProperties.forEach((key, value) -> 
             logger.info("{} = {}", key, value));

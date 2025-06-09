@@ -4,8 +4,6 @@ import com.baskettecase.ragui.dto.ChatRequest;
 import com.baskettecase.ragui.dto.ChatResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
@@ -16,6 +14,7 @@ import org.springframework.ai.rag.Query;
 import java.util.List;
 import java.util.concurrent.*;
 import java.time.Instant;
+import org.springframework.core.env.Environment;
 
 /**
  * RagService provides a chat interface that uses Retrieval-Augmented Generation (RAG) with fallback to LLM.
@@ -34,6 +33,7 @@ import java.time.Instant;
  * to generate an answer using its own knowledge.
  */
 public class RagService {
+    private final Environment environment;
     private static final Logger logger = LoggerFactory.getLogger(RagService.class);
     
     /**
@@ -53,8 +53,9 @@ public class RagService {
      * @param chatClient   the chat client for LLM and advisor interactions
      * @param vectorStore  the vector store for context retrieval
      */
-    public RagService(ChatClient chatClient, VectorStore vectorStore) {
+    public RagService(ChatClient chatClient, VectorStore vectorStore, Environment environment) {
         this.chatClient = chatClient;
+        this.environment = environment;
         this.documentRetriever = VectorStoreDocumentRetriever.builder()
             .similarityThreshold(0.7)
             .vectorStore(vectorStore)
@@ -132,10 +133,10 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
             } else if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
                 logger.debug("Using Pure LLM mode for message: {}", request.getMessage());
-                Prompt pureLlmPrompt = new Prompt(request.getMessage());
                 logger.debug("LLM Prompt (Pure LLM Mode): User: [{}]", request.getMessage());
                 String llmAnswer = null;
                 try {
+                    logger.debug("VERIFYING BASE URL (RagService): spring.ai.openai.base-url = '{}'", environment.getProperty("spring.ai.openai.base-url"));
                     logger.info("[{}] LLM (Pure) call started", Instant.now());
                     llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
                         .user(request.getMessage())
@@ -192,6 +193,7 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
                 if (statusListener != null) statusListener.onStatus("Calling LLM with prompt", 70);
                 String llmAnswer = null;
                 try {
+                    logger.debug("VERIFYING BASE URL (RagService): spring.ai.openai.base-url = '{}'", environment.getProperty("spring.ai.openai.base-url"));
                     logger.info("[{}] LLM (RAG+Fallback) call started", Instant.now());
                     llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
                         .user(llmPrompt)
@@ -257,6 +259,7 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
                     logger.trace("LLM Prompt (RAG Only - Summarization): User: [{}]", llmSummaryPrompt);
                     String llmSummary = null;
                     try {
+                        logger.debug("VERIFYING BASE URL (RagService): spring.ai.openai.base-url = '{}'", environment.getProperty("spring.ai.openai.base-url"));
                         logger.info("[{}] LLM (RAG Only) call started", Instant.now());
                         llmSummary = CompletableFuture.supplyAsync(() -> chatClient.prompt()
                             .user(llmSummaryPrompt)
