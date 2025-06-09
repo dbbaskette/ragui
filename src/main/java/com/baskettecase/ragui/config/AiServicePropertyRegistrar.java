@@ -15,14 +15,22 @@ public class AiServicePropertyRegistrar {
     private CloudFoundryAiConfig.AiServiceProperties aiServiceProperties;
 
     @Autowired
+    private CloudFoundryAiConfig.AiServiceProperties embedServiceProperties;
+
+    @Autowired
     private ConfigurableEnvironment environment;
 
     @PostConstruct
     public void registerAiProperties() {
         Map<String, Object> map = new HashMap<>();
+        // Chat model properties
         map.put("spring.ai.openai.base-url", aiServiceProperties.getApiBase());
         map.put("spring.ai.openai.api-key", aiServiceProperties.getApiKey());
         map.put("spring.ai.openai.chat.model", aiServiceProperties.getModelName());
+        // Embedding model properties
+        map.put("spring.ai.openai.embedding.base-url", embedServiceProperties.getApiBase());
+        map.put("spring.ai.openai.embedding.api-key", embedServiceProperties.getApiKey());
+        map.put("spring.ai.openai.embedding.model", embedServiceProperties.getModelName());
         environment.getPropertySources().addFirst(new MapPropertySource("aiServiceProperties", map));
     }
 }

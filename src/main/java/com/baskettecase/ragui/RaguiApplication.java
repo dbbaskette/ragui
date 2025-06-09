@@ -24,13 +24,13 @@ public class RaguiApplication {
                     String[] activeProfiles = environment.getActiveProfiles();
                     String profiles = activeProfiles.length == 0 ? "default" : String.join(", ", activeProfiles);
                     
-                    out.println("  ____    _    _   _ _   _   _     _   _   _ ");
-                    out.println(" |  _ \\  / \\  | | | | | | | | |_ _| | | | | |");
-                    out.println(" | |_)| / _ \\ | | | | | | | | |_/ _` | | | | | |");
-                    out.println(" |  _ < / ___ \\| |_| | |_| | |_| (_| | |_| |_|_|");
-                    out.println(" |_| \\_\\/_/   \\_\\\\___/ \\___/  \\__/\\\\__,_|_(_) (_|_)");
+                    out.println("  _____    _    ____      ____ _           _   ");
+                    out.println(" |  __ \\  / \\  |  _ \\    / ___| |__   __ _| |_ ");
+                    out.println(" | |__) |/ _ \\ | |_) |  | |   | '_ \\ / _` | __|");
+                    out.println(" |  _  // ___ \\|  _ <   | |___| | | | (_| | |_ ");
+                    out.println(" |_| \\_/_/   \\_\\_| \\_\\   \\____|_| |_|\\__,_|\\__|");
                     out.println("");
-                    out.println(":: RAG UI Application ::");
+                    out.println(":: RAG Chat ::");
                     out.println("Profiles: " + profiles);
                     out.println("");
                     

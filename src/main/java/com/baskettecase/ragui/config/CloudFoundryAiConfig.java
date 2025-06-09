@@ -19,11 +19,19 @@ public class CloudFoundryAiConfig {
         CfEnv cfEnv = new CfEnv();
         var chatModel = cfEnv.findServiceByLabel("chat-model");
         if (chatModel == null) {
-            // Log all available service labels/types for troubleshooting
+            logger.warn("[CFENV] No service with label 'chat-model' found, trying by name...");
+            chatModel = cfEnv.findServiceByName("chat-model");
+        }
+        if (chatModel == null) {
+            // Log all available service names and labels for troubleshooting
+            StringBuilder availableNames = new StringBuilder();
             StringBuilder availableLabels = new StringBuilder();
-            cfEnv.findAllServices().forEach(svc -> availableLabels.append(svc.getLabel()).append(", "));
-            logger.error("[CFENV] No service with label 'chat-model' found. Available service labels: [{}]", availableLabels);
-            throw new IllegalStateException("No service with label 'chat-model' found in VCAP_SERVICES. Available labels: [" + availableLabels + "]");
+            cfEnv.findAllServices().forEach(svc -> {
+                availableNames.append(svc.getName()).append(", ");
+                availableLabels.append(svc.getLabel()).append(", ");
+            });
+            logger.error("[CFENV] No service with label or name 'chat-model' found. Available service names: [{}], labels: [{}]", availableNames, availableLabels);
+            throw new IllegalStateException("No service with label or name 'chat-model' found in VCAP_SERVICES. Names: [" + availableNames + "] Labels: [" + availableLabels + "]");
         }
         String apiBase = chatModel.getCredentials().getString("api_base");
         String apiKey = chatModel.getCredentials().getString("api_key");
@@ -32,6 +40,36 @@ public class CloudFoundryAiConfig {
         logger.info("[CFENV] Extracted chat-model.api_base: {}", apiBase);
         logger.info("[CFENV] Extracted chat-model.api_key: {}", apiKey != null ? "***REDACTED***" : "null");
         logger.info("[CFENV] Extracted chat-model.model_name: {}", modelName);
+
+        return new AiServiceProperties(apiBase, apiKey, modelName);
+    }
+
+    @Bean
+    public AiServiceProperties embedServiceProperties() {
+        CfEnv cfEnv = new CfEnv();
+        var embedModel = cfEnv.findServiceByLabel("embed-model");
+        if (embedModel == null) {
+            logger.warn("[CFENV] No service with label 'embed-model' found, trying by name...");
+            embedModel = cfEnv.findServiceByName("embed-model");
+        }
+        if (embedModel == null) {
+            // Log all available service names and labels for troubleshooting
+            StringBuilder availableNames = new StringBuilder();
+            StringBuilder availableLabels = new StringBuilder();
+            cfEnv.findAllServices().forEach(svc -> {
+                availableNames.append(svc.getName()).append(", ");
+                availableLabels.append(svc.getLabel()).append(", ");
+            });
+            logger.error("[CFENV] No service with label or name 'embed-model' found. Available service names: [{}], labels: [{}]", availableNames, availableLabels);
+            throw new IllegalStateException("No service with label or name 'embed-model' found in VCAP_SERVICES. Names: [" + availableNames + "] Labels: [" + availableLabels + "]");
+        }
+        String apiBase = embedModel.getCredentials().getString("api_base");
+        String apiKey = embedModel.getCredentials().getString("api_key");
+        String modelName = embedModel.getCredentials().getString("model_name");
+
+        logger.info("[CFENV] Extracted embed-model.api_base: {}", apiBase);
+        logger.info("[CFENV] Extracted embed-model.api_key: {}", apiKey != null ? "***REDACTED***" : "null");
+        logger.info("[CFENV] Extracted embed-model.model_name: {}", modelName);
 
         return new AiServiceProperties(apiBase, apiKey, modelName);
     }
