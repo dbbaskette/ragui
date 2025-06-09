@@ -309,13 +309,19 @@ function ChatApp() {
 const style = document.createElement('style');
 // ... rest of the file ...
 
-// Mount the ChatApp to the DOM (ensure this is always present)
-if (root && window.ReactDOM && window.React) {
-    // If using React 18+
-    if (window.ReactDOM.createRoot) {
-        window.ReactDOM.createRoot(root).render(window.React.createElement(ChatApp));
+// Mount the ChatApp to the DOM after DOM is ready
+// This prevents blank screens if script loads before #root exists
+
+document.addEventListener('DOMContentLoaded', function() {
+    const root = document.getElementById('root');
+    if (root && window.ReactDOM && window.React) {
+        if (window.ReactDOM.createRoot) {
+            window.ReactDOM.createRoot(root).render(window.React.createElement(ChatApp));
+        } else {
+            window.ReactDOM.render(window.React.createElement(ChatApp), root);
+        }
     } else {
-        window.ReactDOM.render(window.React.createElement(ChatApp), root);
+        console.error('React, ReactDOM, or #root not found.');
     }
-}
+});
 
