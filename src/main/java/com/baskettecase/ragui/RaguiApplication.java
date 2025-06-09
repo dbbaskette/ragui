@@ -16,7 +16,9 @@ public class RaguiApplication {
     private static final Logger logger = LoggerFactory.getLogger(RaguiApplication.class);
     
     public static void main(String[] args) {
-        SpringApplication app = new SpringApplicationBuilder(RaguiApplication.class)
+        SpringApplication app = new SpringApplication(RaguiApplication.class);
+        app.addInitializers(new com.baskettecase.ragui.config.AiServicePropertyInitializer());
+        app = new SpringApplicationBuilder(app)
             .banner(new Banner() {
                 @Override
                 public void printBanner(Environment environment, Class<?> sourceClass, PrintStream out) {
