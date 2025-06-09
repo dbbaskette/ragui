@@ -33,7 +33,11 @@ import java.time.Instant;
  * and the includeLlmFallback flag is enabled, the service automatically falls back to the base language model (LLM)
  * to generate an answer using its own knowledge.
  */
+@org.springframework.stereotype.Service
 public class RagService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.core.env.Environment springEnv; // For debug logging of base-url
+
     private static final Logger logger = LoggerFactory.getLogger(RagService.class);
     
     /**
@@ -136,6 +140,11 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
                 logger.debug("LLM Prompt (Pure LLM Mode): User: [{}]", request.getMessage());
                 String llmAnswer = null;
                 try {
+                    // DEBUG: Log the current OpenAI base-url property before LLM call
+                    if (springEnv != null) {
+                        String baseUrl = springEnv.getProperty("spring.ai.openai.base-url");
+                        logger.debug("[DEBUG] spring.ai.openai.base-url before LLM call: {}", baseUrl);
+                    }
                     logger.info("[{}] LLM (Pure) call started", Instant.now());
                     llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
                         .user(request.getMessage())
