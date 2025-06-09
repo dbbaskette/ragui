@@ -104,6 +104,8 @@ function ChatApp() {
     const [retryKey, setRetryKey] = React.useState(0);
     const [showRetry, setShowRetry] = React.useState(false);
     const [lastPrompt, setLastPrompt] = React.useState("");
+    // Track if an AI answer has been received for this job
+    const aiAnswerReceivedRef = React.useRef(false);
     // SSE subscription for backend status updates
     React.useEffect(() => {
         if (!jobId) return;
