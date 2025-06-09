@@ -178,6 +178,29 @@ function ChatApp() {
                     });
                 }
                 if (data.complete || data.failed || data.status === "COMPLETE" || data.status === "FAILED") {
+    // Set completion flags FIRST
+    didComplete = true;
+    didCompleteRef.current = true;
+    if (data.status === "FAILED") {
+        didFail = true;
+        didFailRef.current = true;
+    }
+    clearTimeout(timeoutId);
+    setLoading(false);
+    setShowRetry(false); // Remove retry UI
+    // Remove spinner/progress and any retry/timeout/interruption error messages from chat
+    setMessages(msgs =>
+        msgs.filter(
+            m =>
+                !m.spinner &&
+                m.text !== "AI response interrupted or connection lost before completion." &&
+                m.text !== "Timed out waiting for response from backend."
+        )
+    );
+    // Immediately close the SSE connection and mark as closed
+    es.close();
+    sseClosed = true;
+}
                     didComplete = true;
                     didCompleteRef.current = true;
                     if (data.status === "FAILED") {
@@ -199,6 +222,21 @@ function ChatApp() {
             }
         };
         es.onerror = () => {
+    if (didCompleteRef.current || didFailRef.current) {
+        // Ignore errors after job is done
+        return;
+    }
+    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+    setStatusLog(log => [...log, "SSE connection lost."]);
+    setMessages(msgs => [
+        ...msgs.filter(m => !m.spinner),
+        { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
+    ]);
+    setLoading(false);
+    setShowRetry(true);
+    sseClosed = true;
+    es.close();
+};
             if (didCompleteRef.current || didFailRef.current) {
                 // Ignore errors after job is done
                 return;
@@ -216,6 +254,21 @@ function ChatApp() {
         };
         // Custom close detection (not native in EventSource)
         const closeCheck = setInterval(() => {
+    if (didCompleteRef.current || didFailRef.current) {
+        clearInterval(closeCheck);
+        return;
+    }
+    if (sseClosed && !didCompleteRef.current && !didFailRef.current) {
+        setStatusLog(log => [...log, "AI response interrupted or connection lost before completion."]);
+        setMessages(msgs => [
+            ...msgs.filter(m => !m.spinner),
+            { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
+        ]);
+        setLoading(false);
+        setShowRetry(true);
+        clearInterval(closeCheck);
+    }
+});
             if (didCompleteRef.current || didFailRef.current) {
                 clearInterval(closeCheck);
                 return;
