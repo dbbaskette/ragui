@@ -17,11 +17,7 @@ public class CloudFoundryAiConfig {
         logger.debug("[CFENV] VCAP_SERVICES at startup: {}", vcapServices);
 
         CfEnv cfEnv = new CfEnv();
-        var chatModel = cfEnv.findServiceByLabel("chat-model");
-        if (chatModel == null) {
-            logger.warn("[CFENV] No service with label 'chat-model' found, trying by name...");
-            chatModel = cfEnv.findServiceByName("chat-model");
-        }
+        var chatModel = cfEnv.findServiceByName("chat-model");
         if (chatModel == null) {
             // Log all available service names and labels for troubleshooting
             StringBuilder availableNames = new StringBuilder();
@@ -47,11 +43,7 @@ public class CloudFoundryAiConfig {
     @Bean
     public AiServiceProperties embedServiceProperties() {
         CfEnv cfEnv = new CfEnv();
-        var embedModel = cfEnv.findServiceByLabel("embed-model");
-        if (embedModel == null) {
-            logger.warn("[CFENV] No service with label 'embed-model' found, trying by name...");
-            embedModel = cfEnv.findServiceByName("embed-model");
-        }
+        var embedModel = cfEnv.findServiceByName("embed-model");
         if (embedModel == null) {
             // Log all available service names and labels for troubleshooting
             StringBuilder availableNames = new StringBuilder();
