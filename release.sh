@@ -4,6 +4,26 @@
 
 set -e
 
+# --- Rollback Support ---
+rollback() {
+  echo "\n[ROLLBACK] Release failed. Reverting to previous state..."
+  if [[ -f pom.xml.bak_release ]]; then
+    mv pom.xml.bak_release pom.xml
+    echo "[ROLLBACK] Restored pom.xml to previous version."
+  fi
+  if [[ -f "$INDEX_HTML.bak_release" ]]; then
+    mv "$INDEX_HTML.bak_release" "$INDEX_HTML"
+    echo "[ROLLBACK] Restored $INDEX_HTML to previous state."
+  fi
+  if [[ -n "$JS_BUNDLE_BACKUP" && -f "$JS_BUNDLE_BACKUP" ]]; then
+    cp "$JS_BUNDLE_BACKUP" "$STATIC_DIR/$JS_SRC_BASENAME"
+    echo "[ROLLBACK] Restored JS bundle: $JS_SRC_BASENAME"
+  fi
+  echo "[ROLLBACK] Done."
+  exit 1
+}
+trap rollback ERR
+
 # 1. Get current branch
 git_branch=$(git rev-parse --abbrev-ref HEAD)
 echo "Current git branch: $git_branch"
@@ -46,6 +66,15 @@ read answer
 if [[ ! "$answer" =~ ^[Yy]$ ]]; then
   echo "Aborted by user. No changes made."
   exit 0
+fi
+
+# --- Save backups for rollback ---
+cp pom.xml pom.xml.bak_release
+cp "$INDEX_HTML" "$INDEX_HTML.bak_release"
+JS_SRC_BASENAME="$(basename "$JS_SRC")"
+JS_BUNDLE_BACKUP="$STATIC_DIR/backup_$JS_SRC_BASENAME"
+if [[ -n "$JS_SRC_BASENAME" && -f "$JS_SRC" ]]; then
+  cp "$JS_SRC" "$JS_BUNDLE_BACKUP"
 fi
 
 # 4. Update only the correct <version> tag in pom.xml (the one after <artifactId>ragui</artifactId>)
