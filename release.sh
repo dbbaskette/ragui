@@ -4,6 +4,14 @@
 
 set -e
 
+# --- Static/JS/HTML Variables ---
+STATIC_DIR="src/main/resources/static"
+JS_BASENAME="main"
+INDEX_HTML="$STATIC_DIR/index.html"
+JS_SRC=$(ls -1t "$STATIC_DIR"/main.*.js 2>/dev/null | head -n1)
+JS_SRC_BASENAME="$(basename "$JS_SRC")"
+JS_BUNDLE_BACKUP="$STATIC_DIR/backup_$JS_SRC_BASENAME"
+
 # --- Rollback Support ---
 rollback() {
   echo "\n[ROLLBACK] Release failed. Reverting to previous state..."
