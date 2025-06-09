@@ -18,6 +18,14 @@ import java.util.concurrent.*;
 import java.time.Instant;
 
 /**
+ * RagService provides a chat interface that uses Retrieval-Augmented Generation (RAG) with fallback to LLM.
+ * <p>
+ * This service first attempts to answer user queries using context retrieved from a vector store via the
+ * QuestionAnswerAdvisor. If no relevant context is found or the advisor returns a fallback response, the service
+ * automatically falls back to the base language model (LLM) to generate an answer using its own knowledge.
+ */
+@Service
+/**
  * RagService provides a chat interface that uses Retrieval-Augmented Generation (RAG) with optional LLM fallback.
  *
  * The service first attempts to answer user queries using context retrieved from a vector store (RAG).
@@ -25,7 +33,6 @@ import java.time.Instant;
  * and the includeLlmFallback flag is enabled, the service automatically falls back to the base language model (LLM)
  * to generate an answer using its own knowledge.
  */
-@Service
 public class RagService {
     private static final Logger logger = LoggerFactory.getLogger(RagService.class);
     

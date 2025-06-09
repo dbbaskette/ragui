@@ -13,13 +13,6 @@ import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * REST controller for job submission and SSE streaming in the RAG UI.
- *
- * Endpoints:
- *   - POST /api/job: Submits a chat job (async)
- *   - GET /api/events/{jobId}: Streams job status and results via SSE
- */
 @RestController
 @RequestMapping("/api")
 public class JobController {
@@ -29,23 +22,17 @@ public class JobController {
     private RagService ragService;
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
-    /**
-     * Submits a new chat job for processing. Returns a jobId for SSE tracking.
-     * @param request Chat request payload
-     * @return JobIdResponse containing the jobId
-     */
     @PostMapping("/job")
     public JobIdResponse submitJob(@RequestBody ChatRequest request) {
         org.slf4j.LoggerFactory.getLogger(JobController.class).debug("/api/job received: {}", request);
         Job job = jobService.createJob();
         job.setStatus(Job.Status.QUEUED);
-        // Process the job asynchronously so the API returns immediately
+        // Async process
         executor.submit(() -> {
             job.setStatus(Job.Status.RUNNING);
             org.slf4j.LoggerFactory.getLogger(JobController.class).debug("Job {} started", job.getJobId());
             try {
                 StringBuilder statusMsg = new StringBuilder();
-                // Call RAG service and update job status/progress
                 var response = ragService.chat(request, (status, progress) -> {
                     job.setStatus(Job.Status.RUNNING);
                     statusMsg.append(status).append("\n");
@@ -63,11 +50,6 @@ public class JobController {
         return new JobIdResponse(job.getJobId());
     }
 
-    /**
-     * Streams job status and results to the frontend via Server-Sent Events (SSE).
-     * @param jobId The job ID to stream
-     * @return SseEmitter for streaming job updates
-     */
     @GetMapping(value = "/events/{jobId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamJob(@PathVariable String jobId) {
         org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE connection opened for job {}", jobId);

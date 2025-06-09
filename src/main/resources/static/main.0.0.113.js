@@ -1,29 +1,6 @@
-/**
- * main.0.0.107.js
- * 
- * Tanzu RAG UI Chat Frontend Bundle
- * 
- * - Mounts the main React chat app to the DOM
- * - Handles user input, displays chat messages, and manages configuration
- * - Connects to the backend via SSE for job status and streaming responses
- * - Ensures robust error handling and user feedback for connection issues
- * 
- * Key features:
- *   - Displays spinner/waiting messages while awaiting backend
- *   - Removes interruption/timeout messages upon successful completion
- *   - Shows system/configuration info and backend status logs
- *   - Cleanly manages SSE lifecycle and React state
- * 
- * See implementation_details.md for technical notes, and gotchas.md for edge cases.
- */
-
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages
-/**
- * Renders a system message showing the constructed prompt sent to the LLM, with expand/collapse for long prompts.
- * @param {{ text: string }} props
- */
 function ConstructedPromptMessage({ text }) {
     const [expanded, setExpanded] = React.useState(false);
     // Remove the prefix for display
@@ -43,10 +20,6 @@ function ConstructedPromptMessage({ text }) {
     );
 }
 
-/**
- * Renders the configuration panel overlay, showing current app config, version, and last prompt sent.
- * @param {{ config: object, version: string, onClose: function, lastPrompt: string }} props
- */
 function ConfigPanel({ config, version, onClose, lastPrompt }) {
     if (!config) return null;
     // Exclude app.version from the config entries since it's shown in the header
@@ -80,10 +53,6 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
     );
 }
 
-/**
- * Shows database plan, chat model, and embedding model info from config.
- * @param {{ config: object }} props
- */
 function ConnectionInfoBar({ config }) {
     if (!config) return null;
     // Use new config keys
@@ -98,10 +67,6 @@ function ConnectionInfoBar({ config }) {
 }
 
 // StatusLogPanel: shows backend status/progress messages at the bottom
-/**
- * Shows backend status/progress messages at the bottom of the UI.
- * @param {{ statusLog: string[] }} props
- */
 function StatusLogPanel({ statusLog }) {
     if (!statusLog || statusLog.length === 0) return null;
     return React.createElement(
@@ -117,10 +82,6 @@ function StatusLogPanel({ statusLog }) {
     );
 }
 
-/**
- * Main chat application React component.
- * Handles user input, backend job management, SSE lifecycle, and UI state.
- */
 function ChatApp() {
     // Always show app title at the top
     const appTitleBar = React.createElement("div", { className: "chat-header" },
@@ -144,10 +105,6 @@ function ChatApp() {
     const [showRetry, setShowRetry] = React.useState(false);
     const [lastPrompt, setLastPrompt] = React.useState("");
     // SSE subscription for backend status updates
-    /**
-     * Effect: Manages SSE connection for backend job updates.
-     * Handles spinner, status, error, and completion logic.
-     */
     React.useEffect(() => {
         if (!jobId) return;
         setLoading(true);
@@ -160,7 +117,6 @@ function ChatApp() {
         const didCompleteRef = { current: false };
         const didFailRef = { current: false };
         let sseClosed = false;
-        // Timeout: If backend does not respond in time, show timeout message.
         let timeoutId = setTimeout(() => {
             if (didCompleteRef.current || didFailRef.current) {
                 console.log("[SSE] Timeout fired, but already complete/failed; ignoring.");
@@ -175,18 +131,11 @@ function ChatApp() {
             setShowRetry(true);
             console.log("[SSE] Timeout fired (frontend)");
         }, 185000); // 185 seconds (3 min 5 sec)
-        // Open SSE connection for job status updates
         const es = new EventSource(`/api/events/${jobId}`);
         console.log("[SSE] Connection opened for jobId", jobId);
-        /**
-         * SSE onopen: Connection established.
-         */
         es.onopen = () => {
             console.log("[SSE] onopen");
         };
-        /**
-         * SSE onmessage: Handles all backend events and job status updates.
-         */
         es.onmessage = (event) => {
             console.log("[SSE] onmessage", event.data);
             try {
@@ -259,9 +208,6 @@ function ChatApp() {
                 console.log("[SSE] Malformed SSE message", event.data);
             }
         };
-        /**
-         * SSE onerror: Handles connection errors. Only show interruption if job not complete/failed.
-         */
         es.onerror = () => {
             if (didCompleteRef.current || didFailRef.current) {
                 // Ignore errors after job is done
@@ -278,7 +224,6 @@ function ChatApp() {
             sseClosed = true;
             es.close();
         };
-        // Interval: Check if SSE closed before job completed. If so, show interruption message.
         const closeCheck = setInterval(() => {
             if (didCompleteRef.current || didFailRef.current) {
                 clearInterval(closeCheck);
@@ -295,7 +240,6 @@ function ChatApp() {
                 clearInterval(closeCheck);
             }
         }, 1000);
-        // Cleanup: Close SSE and clear timeout on unmount or jobId/retryKey change.
         return () => {
             if (timeoutId) clearTimeout(timeoutId);
             es.close();
@@ -308,20 +252,3 @@ function ChatApp() {
 // Add styles for the config and status panels
 const style = document.createElement('style');
 // ... rest of the file ...
-
-// Mount the ChatApp to the DOM after DOM is ready
-// This prevents blank screens if script loads before #root exists
-
-document.addEventListener('DOMContentLoaded', function() {
-    const root = document.getElementById('root');
-    if (root && window.ReactDOM && window.React) {
-        if (window.ReactDOM.createRoot) {
-            window.ReactDOM.createRoot(root).render(window.React.createElement(ChatApp));
-        } else {
-            window.ReactDOM.render(window.React.createElement(ChatApp), root);
-        }
-    } else {
-        console.error('React, ReactDOM, or #root not found.');
-    }
-});
-
