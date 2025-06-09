@@ -213,15 +213,25 @@ function ChatApp() {
             }
             if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
             setStatusLog(log => [...log, "SSE connection lost."]);
-            setMessages(msgs => [
-                ...msgs.filter(m => !m.spinner),
-                { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
-            ]);
+            setMessages(msgs => {
+                // Only show interruption message if last LLM message is still a spinner
+                const filtered = msgs.filter(m => !m.spinner);
+                const lastMsg = msgs[msgs.length - 1];
+                if (lastMsg && lastMsg.spinner) {
+                    return [
+                        ...filtered,
+                        { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
+                    ];
+                } else {
+                    return filtered;
+                }
+            });
             setLoading(false);
             setShowRetry(true);
             sseClosed = true;
             es.close();
         };
+
         // Custom close detection (not native in EventSource)
         const closeCheck = setInterval(() => {
             if (didCompleteRef.current || didFailRef.current) {
@@ -252,7 +262,7 @@ function ChatApp() {
         setStatusLog(log => [...log, "Retrying SSE connection..."]);
         setMessages(msgs => [
             ...msgs.filter(m => !m.spinner),
-            { sender: "system", text: "Retrying SSE connection...", spinner: true }
+            { sender: "llm", text: "AI is thinking...", spinner: true }
         ]);
         setLoading(true);
     };
@@ -280,7 +290,7 @@ function ChatApp() {
             const updated = [
                 ...msgs,
                 { sender: "user", text: input },
-                { sender: "llm", text: "Waiting...", spinner: true }
+                { sender: "llm", text: "AI is thinking...", spinner: true }
             ];
             console.log("After user message:", updated);
             return updated;
