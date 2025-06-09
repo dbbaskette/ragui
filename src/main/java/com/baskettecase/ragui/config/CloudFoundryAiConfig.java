@@ -12,10 +12,18 @@ public class CloudFoundryAiConfig {
 
     @Bean
     public AiServiceProperties aiServiceProperties() {
+        // Print the full VCAP_SERVICES at startup for debugging
+        String vcapServices = System.getenv("VCAP_SERVICES");
+        logger.debug("[CFENV] VCAP_SERVICES at startup: {}", vcapServices);
+
         CfEnv cfEnv = new CfEnv();
         var chatModel = cfEnv.findServiceByLabel("chat-model");
         if (chatModel == null) {
-            throw new IllegalStateException("No service with label 'chat-model' found in VCAP_SERVICES");
+            // Log all available service labels/types for troubleshooting
+            StringBuilder availableLabels = new StringBuilder();
+            cfEnv.findAllServices().forEach(svc -> availableLabels.append(svc.getLabel()).append(", "));
+            logger.error("[CFENV] No service with label 'chat-model' found. Available service labels: [{}]", availableLabels);
+            throw new IllegalStateException("No service with label 'chat-model' found in VCAP_SERVICES. Available labels: [" + availableLabels + "]");
         }
         String apiBase = chatModel.getCredentials().getString("api_base");
         String apiKey = chatModel.getCredentials().getString("api_key");
