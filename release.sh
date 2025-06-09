@@ -65,37 +65,24 @@ awk -v aid="$main_artifact_id" -v newver="$new_version" '
 
 echo "pom.xml updated."
 
-# 4b. Rename main.js to main.$new_version.js and update index.html
+# 4b. Ensure main.js exists and is referenced in index.html
 STATIC_DIR="src/main/resources/static"
-JS_BASENAME="main"
 INDEX_HTML="$STATIC_DIR/index.html"
 
-# Find the latest main.*.js file (excluding already-versioned ones if possible)
-JS_SRC=$(ls -1t "$STATIC_DIR"/main.*.js 2>/dev/null | head -n1)
-
-if [[ -z "$JS_SRC" ]]; then
-  echo "No main.js or main.*.js file found in $STATIC_DIR"
-  echo "Build your frontend to generate a JS bundle before running release."
+JS_SRC="$STATIC_DIR/main.js"
+if [[ ! -f "$JS_SRC" ]]; then
+  echo "main.js not found in $STATIC_DIR. Build your frontend before running release."
   exit 1
 fi
 
-JS_DST="$STATIC_DIR/$JS_BASENAME.$new_version.js"
-cp "$JS_SRC" "$JS_DST"
-echo "Copied $JS_SRC to $JS_DST"
-# Remove all other main.*.js files except the new one
-for jsfile in "$STATIC_DIR"/main.*.js; do
-  if [[ "$jsfile" != "$JS_DST" ]]; then
-    rm "$jsfile"
-    echo "Removed old bundle: $jsfile"
-  fi
-done
-# Robustly update index.html to reference the new JS file
-if grep -qE '<script src="main\.[^\"]*\.js"></script>' "$INDEX_HTML"; then
-  sed -i.bak 's|<script src="main\.[^\"]*\.js"></script>|<script src="main.'"$new_version"'.js"></script>|g' "$INDEX_HTML"
-  rm "$INDEX_HTML.bak"
-  echo "Updated $INDEX_HTML to reference main.$new_version.js"
+# Ensure index.html references main.js
+if grep -q '<script src="main.js"></script>' "$INDEX_HTML"; then
+  echo "index.html already references main.js"
 else
-  echo "Warning: Could not find <script src=\"main.*.js\"></script> in $INDEX_HTML. Please update manually."
+  # Replace any script tag referencing main.*.js with main.js
+  sed -i.bak 's|<script src="main\.[^"]*\.js"></script>|<script src="main.js"></script>|g' "$INDEX_HTML"
+  rm "$INDEX_HTML.bak"
+  echo "Updated $INDEX_HTML to reference main.js"
 fi
 
 # 5. Git add, commit, push
