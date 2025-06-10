@@ -162,6 +162,11 @@ echo "Release tagged as v$new_version and pushed."
 echo -n "Would you like to build the new JAR and push to Cloud Foundry? [y/N]: "
 read deploy_answer
 if [[ "$deploy_answer" =~ ^[Yy]$ ]]; then
+  # Delete the app if it exists, just like in --test mode
+  if cf app "$app_name" &> /dev/null; then
+    echo -e "\033[1;33mDeleting existing app $app_name...\033[0m"
+    cf delete "$app_name" -f
+  fi
   echo "Building JAR with mvn clean package..."
   mvn clean package
   echo "Updating manifest.yml with new JAR path: target/${main_artifact_id}-$new_version.jar"

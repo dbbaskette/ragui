@@ -1,4 +1,4 @@
-const MAIN_JS_VERSION = "0.3.7";
+const MAIN_JS_VERSION = "0.3.8";
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages
@@ -564,34 +564,6 @@ function ChatApp() {
             React.createElement("div", {
                 className: "progress-bar-bg"
             },
-                React.createElement("div", {
-                    className: "progress-bar-fg",
-                    style: { width: (progress !== null ? progress : 0) + "%" }
-                })
-            ),
-            React.createElement("span", { className: "progress-bar-label" }, `${progress !== null ? progress : 0}%`)
-        ),
-        React.createElement(StatusLogPanel, { statusLog }),
-        showConfig && React.createElement(ConfigPanel, { config: configWithVersion, version, onClose: () => setShowConfig(false), lastPrompt }),
-        React.createElement("div", { className: "chat-container" },
-            React.createElement("div", { className: "chat-header" },
-                React.createElement("h1", { style: { display: 'flex', alignItems: 'center', gap: 8, margin: 0 } },
-                    React.createElement("img", {
-                        src: "images/tanzu.png",
-                        alt: "",
-                        'aria-label': "Tanzu Logo",
-                        style: { height: 24, width: 'auto', display: 'inline-block', margin: 0, padding: 0 }
-                    }),
-                    React.createElement("span", { style: { display: 'inline-block', verticalAlign: 'middle' } }, "Tanzu RAG Chat")
-                ),
-                React.createElement("button", { 
-                    className: "config-btn",
-                    onClick: () => setShowConfig(true),
-                    title: "Show Configuration"
-                }, "⚙️")
-            ),
-
-            React.createElement("div", { className: "response-box" },
                 messages.length === 0
                     ? React.createElement("div", { className: "placeholder" }, "Responses will appear here.")
                     : messages.map((m, i) =>
