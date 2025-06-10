@@ -182,6 +182,8 @@ function ChatApp() {
                     if (data.status === 'COMPLETED' || data.status === 'FAILED') {
                         window.__raguiJobReallyComplete = true;
                         if (typeof es !== 'undefined') es.close();
+                        setProgress(100);
+                        setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
                         return;
                     }
                 } else if (typeof data.message === "string" && data.message.trim() !== "") {
