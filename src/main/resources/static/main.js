@@ -1,4 +1,4 @@
-const MAIN_JS_VERSION = "0.3.3";
+const MAIN_JS_VERSION = "0.3.5";
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages
@@ -445,22 +445,131 @@ function ChatApp() {
     // Add version to config for display in the config list
     const configWithVersion = config ? { ...config, "app.version": version } : config;
     return React.createElement("div", { className: "app-container" },
-        // Progress meter just above status bar
-        (progress !== null && progress > 0 && progress < 100) && React.createElement("div", {
-            style: {
-                width: "100%", maxWidth: 400, margin: "16px auto 0 auto", background: "#e0e0e0", borderRadius: 6, height: 18, position: "relative"
-            }
-        },
+        React.createElement("div", { className: "main-content-row" },
+            React.createElement("div", { className: "chat-container" },
+                React.createElement("div", { className: "chat-header" },
+                    React.createElement("h1", { style: { display: 'flex', alignItems: 'center', gap: 8, margin: 0 } },
+                        React.createElement("img", {
+                            src: "images/tanzu.png",
+                            alt: "",
+                            'aria-label': "Tanzu Logo",
+                            style: { height: 24, width: 'auto', display: 'inline-block', margin: 0, padding: 0 }
+                        }),
+                        React.createElement("span", { style: { display: 'inline-block', verticalAlign: 'middle' } }, "Tanzu RAG Chat")
+                    ),
+                    React.createElement("button", { 
+                        className: "config-btn",
+                        onClick: () => setShowConfig(true),
+                        title: "Show Configuration"
+                    }, "⚙️")
+                ),
+                React.createElement("div", { className: "response-box" },
+                    messages.length === 0
+                        ? React.createElement("div", { className: "placeholder" }, "Responses will appear here.")
+                        : messages.map((m, i) =>
+                            React.createElement("div", {
+                                key: i,
+                                className: "msg " + (
+                                    m.system ? "system" : (m.sender === "user" ? "user" : "llm")
+                                )
+                            },
+                                m.system && m.text && m.text.startsWith("Prompt sent to LLM: ")
+                                    ? React.createElement(ConstructedPromptMessage, { text: m.text })
+                                    : m.system
+                                        ? React.createElement("span", { style: { fontStyle: "italic", background: "#f7f7f7", color: "#444", padding: "4px 8px", borderRadius: 4, display: "inline-block", marginBottom: 4 } }, m.text)
+                                        : m.sender === "user"
+                                            ? ["You: ", m.text]
+                                            : [
+                                                "AI: ",
+                                                m.spinner
+                                                    ? React.createElement("span", { className: "spinner", style: { marginLeft: 4 }, "aria-label": "Loading..." },
+                                                        React.createElement("span", { className: "dot dot1" }),
+                                                        React.createElement("span", { className: "dot dot2" }),
+                                                        React.createElement("span", { className: "dot dot3" })
+                                                    )
+                                                    : null,
+                                                m.spinner ? " AI is thinking..." : m.text
+                                            ]
+                                )
+                        )
+                ),
+                showRetry && React.createElement("div", { style: { margin: "16px 0", textAlign: "center" } },
+                    React.createElement("div", { style: { marginBottom: 8, color: "#b00", fontWeight: 500 } },
+                        "The connection was lost or interrupted before a complete response was received. You can retry to attempt to reconnect to this job."
+                    ),
+                    React.createElement("button", {
+                        onClick: handleRetry,
+                        style: { padding: "8px 20px", fontSize: "1.1em", borderRadius: 6, background: "#f2f2f2", border: "1px solid #bbb", cursor: "pointer" }
+                    }, "Retry Connection")
+                ),
+                React.createElement("form", { onSubmit: sendMessage, className: "chat-form" },
+                    React.createElement("input", {
+                        type: "text",
+                        value: input,
+                        onChange: e => setInput(e.target.value),
+                        disabled: loading,
+                        placeholder: loading ? "Waiting for response..." : "Type your question here and press Enter",
+                        style: { marginRight: 10, width: 420, maxWidth: "90%" },
+                        ref: inputRef
+                    }),
+                    React.createElement("button", { type: "submit", disabled: loading, style: { marginTop: 8 } }, loading ? "..." : "Send")
+                )
+            ),
+            React.createElement("div", { className: "llm-options-box" },
+                React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "Response Mode"),
+                React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
+                    React.createElement("input", {
+                        type: "radio",
+                        name: "llmMode",
+                        checked: llmMode === 'rag-only',
+                        onChange: () => setLlmMode('rag-only'),
+                        style: { marginRight: 4 }
+                    }),
+                    "RAG Only"
+                ),
+                React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
+                    React.createElement("input", {
+                        type: "radio",
+                        name: "llmMode",
+                        checked: llmMode === 'rag-with-fallback',
+                        onChange: () => setLlmMode('rag-with-fallback'),
+                        style: { marginRight: 4 }
+                    }),
+                    "RAG with LLM Fallback"
+                ),
+                React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
+                    React.createElement("input", {
+                        type: "radio",
+                        name: "llmMode",
+                        checked: llmMode === 'raw-rag',
+                        onChange: () => setLlmMode('raw-rag'),
+                        style: { marginRight: 4 }
+                    }),
+                    "Raw RAG (Concatenated DB Results)"
+                ),
+                React.createElement("label", { style: { display: "block", fontSize: '0.85em' } },
+                    React.createElement("input", {
+                        type: "radio",
+                        name: "llmMode",
+                        checked: llmMode === 'pure-llm',
+                        onChange: () => setLlmMode('pure-llm'),
+                        style: { marginRight: 4 }
+                    }),
+                    "Pure LLM (No RAG)"
+                )
+            )
+        ),
+        // Always show progress meter at the bottom
+        React.createElement("div", { className: "progress-bar-container" },
             React.createElement("div", {
-                style: {
-                    width: progress + "%", height: "100%", background: "#1a73e8", borderRadius: 6, transition: "width 0.3s"
-                }
-            }),
-            React.createElement("span", {
-                style: {
-                    position: "absolute", left: 0, right: 0, top: 0, bottom: 0, textAlign: "center", lineHeight: "18px", fontWeight: 500, color: "#222"
-                }
-            }, `${progress}%`)
+                className: "progress-bar-bg"
+            },
+                React.createElement("div", {
+                    className: "progress-bar-fg",
+                    style: { width: (progress !== null ? progress : 0) + "%" }
+                })
+            ),
+            React.createElement("span", { className: "progress-bar-label" }, `${progress !== null ? progress : 0}%`)
         ),
         React.createElement(StatusLogPanel, { statusLog }),
         showConfig && React.createElement(ConfigPanel, { config: configWithVersion, version, onClose: () => setShowConfig(false), lastPrompt }),
