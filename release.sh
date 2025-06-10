@@ -4,8 +4,39 @@
 
 set -e
 
+if [[ "$1" == "--local" ]]; then
+  echo -e "\033[1;36mRunning in LOCAL DEV mode: will build and run the app locally. Backend services may not be available.\033[0m"
+  JAR_NAME=$(ls target/*.jar 2>/dev/null | grep -v '.original' | head -1)
+  if [[ ! -f "$JAR_NAME" ]]; then
+    echo "No built JAR found, building with mvn clean package..."
+    mvn clean package
+    JAR_NAME=$(ls target/*.jar 2>/dev/null | grep -v '.original' | head -1)
+  fi
+  if [[ -f "$JAR_NAME" ]]; then
+    echo -e "\033[1;32mLaunching: java -jar $JAR_NAME\033[0m"
+    java -jar "$JAR_NAME"
+  else
+    echo "Could not find built JAR in target/. Exiting."
+    exit 1
+  fi
+  exit 0
+fi
+
 if [[ "$1" == "--test" ]]; then
   echo "Running in TEST mode: will only build and push, no version bump or git commit."
+  # Parse app name from manifest.yml
+  app_name=$(grep 'name:' manifest.yml | head -1 | sed 's/.*name:[[:space:]]*//')
+  if [[ -n "$app_name" ]]; then
+    # Print delete step in bold yellow with separators for visibility
+    YELLOW='\033[1;33m'
+    NC='\033[0m' # No Color
+    echo -e "${YELLOW}==============================${NC}"
+    echo -e "${YELLOW}Deleting existing CF app: $app_name (to avoid route caching)${NC}"
+    echo -e "${YELLOW}==============================${NC}"
+    cf delete "$app_name" -f -r || true
+    echo -e "${YELLOW}-------- Delete step complete --------${NC}"
+
+  fi
   main_artifact_id=$(awk '
     /<parent>/ {in_parent=1}
     /<\/parent>/ {in_parent=0; next}
@@ -23,6 +54,17 @@ if [[ "$1" == "--test" ]]; then
   current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; while (!/<version>/) getline; gsub(/.*<version>|<\/version>.*/, ""); print $0; exit}' pom.xml)
   echo "Main artifactId: $main_artifact_id"
   echo "Current version: $current_version"
+
+  # Ensure only one MAIN_JS_VERSION assignment at the top of main.js
+  mainjs="src/main/resources/static/main.js"
+  tmpfile="${mainjs}.tmp"
+  # Remove any existing MAIN_JS_VERSION assignment
+  grep -v '^const MAIN_JS_VERSION = ' "$mainjs" > "$tmpfile" || true
+  # Insert the correct version at the top
+  echo "const MAIN_JS_VERSION = \"$current_version\";" > "${mainjs}.new"
+  cat "$tmpfile" >> "${mainjs}.new"
+  mv "${mainjs}.new" "$mainjs"
+  rm -f "$tmpfile"
 
   echo "Building JAR with mvn clean package..."
   mvn clean package

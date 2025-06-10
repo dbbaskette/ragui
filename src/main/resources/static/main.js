@@ -1,3 +1,4 @@
+const MAIN_JS_VERSION = "0.3.2";
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages
@@ -20,6 +21,7 @@ function ConstructedPromptMessage({ text }) {
     );
 }
 
+
 function ConfigPanel({ config, version, onClose, lastPrompt }) {
     if (!config) return null;
     // Exclude app.version from the config entries since it's shown in the header
@@ -35,7 +37,9 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
             ),
             React.createElement("div", { className: "config-version" },
                 React.createElement("strong", null, "App Version: "),
-                React.createElement("span", { className: "config-value" }, (config && config["app.version"]) || version || "unknown")
+                React.createElement("span", { className: "config-value" }, (config && config["app.version"]) || version || "unknown"),
+                React.createElement("span", { style: { marginLeft: 12 } }, "Main.js Version: "),
+                React.createElement("span", { className: "config-value" }, typeof MAIN_JS_VERSION !== "undefined" ? MAIN_JS_VERSION : "unknown")
             ),
             React.createElement("div", { className: "config-last-prompt" },
                 React.createElement("strong", null, "Last prompt: "),
@@ -92,7 +96,7 @@ function ChatApp() {
     const inputRef = React.useRef(null);
     const [messages, setMessages] = React.useState([]);
     const [loading, setLoading] = React.useState(false);
-    const [llmMode, setLlmMode] = React.useState('rag-with-fallback'); // 'rag-only', 'rag-with-fallback', 'pure-llm', 'raw-rag'
+    const [llmMode, setLlmMode] = React.useState('rag-only'); // Default to 'RAG Only' mode
     const [showConfig, setShowConfig] = React.useState(false);
     const [config, setConfig] = React.useState(null);
     const [version, setVersion] = React.useState(null);
@@ -156,6 +160,14 @@ function ChatApp() {
             setShowRetry(true);
             console.log("[SSE] Timeout fired (frontend)");
         }, 185000); // 185 seconds (3 min 5 sec)
+        // Defensive: Prevent SSE connection if job is already marked complete
+        if (window.__raguiJobReallyComplete && window.__raguiJobLastJobId === jobId) {
+            console.warn(`[SSE] Prevented SSE connection for already completed jobId ${jobId}`);
+            setLoading(false);
+            setShowRetry(false);
+            return;
+        }
+        window.__raguiJobLastJobId = jobId;
         const es = new EventSource(`/api/events/${jobId}`);
         console.log("[SSE] Connection opened for jobId", jobId);
         es.onopen = () => {
@@ -175,20 +187,35 @@ function ChatApp() {
                         return log;
                     });
                     setCurrentStatus(data.statusMessage || data.status_message);
-                    // Also show all status messages as system messages in chat (not just in status log)
-                    setMessages(msgs => {
-                        const msg = data.statusMessage || data.status_message;
-                        // Only add if not a duplicate of the last system message
-                        if (msgs.length === 0 || !(msgs[msgs.length - 1].system && msgs[msgs.length - 1].text === msg)) {
-                            return [...msgs, { sender: "system", text: msg, system: true }];
-                        }
-                        return msgs;
-                    });
+                    // Remove: do NOT show backend status messages as system messages in chat (except spinner/progress)
+                    // Only show 'AI is thinking...' spinner if loading
+                    // (No action needed here; status messages will only appear in the status log panel)
                     // Defensive: Mark job as done if status indicates completion
                     if (data.status === 'COMPLETED' || data.status === 'FAILED') {
                         window.__raguiJobReallyComplete = true;
                         if (typeof es !== 'undefined') es.close();
                         return;
+                    }
+                } else if (typeof data.message === "string" && data.message.trim() !== "") {
+                    // Handle plain LLM message event (final answer)
+                    if (!aiAnswerReceivedRef.current) { // Prevent duplicate answer
+                        setMessages(msgs => {
+                            const lastMsg = msgs[msgs.length - 1];
+                            if (!lastMsg || lastMsg.text !== data.message) {
+                                const updated = [...msgs.filter(m => !m.spinner), { sender: "llm", text: data.message, spinner: false }];
+                                console.log("After AI message (plain message):", updated);
+                                return updated;
+                            }
+                            return msgs;
+                        });
+                        aiAnswerReceivedRef.current = true;
+                        jobReallyDone = true;
+                        window.__raguiJobReallyComplete = true;
+                        setLoading(false);
+                        setShowRetry(false);
+                        setCurrentStatus('COMPLETED');
+                        setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
+                        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
                     }
                 } else if (data.status) {
                     setStatusLog(log => {
@@ -219,18 +246,26 @@ function ChatApp() {
                 }
                 // Show AI response if present (either as 'message' or as 'response.answer')
                 if (data.message) {
-                    // Focus input after answer
-                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-                    aiAnswerReceivedRef.current = true;
-                    jobReallyDone = true;
-                    window.__raguiJobReallyComplete = true;
-                    setMessages(msgs => {
-                        const updated = [...msgs.filter(m => !m.spinner), { sender: data.sender || "llm", text: data.message, spinner: false }];
-                        console.log("After AI message (message):", updated);
-                        return updated;
-                    });
-                    // Defensive: clear timeout as soon as a final answer is rendered
-                    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+                    // Only add if not already received (dedupe)
+                    if (!aiAnswerReceivedRef.current) {
+                        setMessages(msgs => {
+                            const lastMsg = msgs[msgs.length - 1];
+                            if (!lastMsg || lastMsg.text !== data.message) {
+                                const updated = [...msgs.filter(m => !m.spinner), { sender: data.sender || "llm", text: data.message, spinner: false }];
+                                console.log("After AI message (message):", updated);
+                                return updated;
+                            }
+                            return msgs;
+                        });
+                        aiAnswerReceivedRef.current = true;
+                        jobReallyDone = true;
+                        window.__raguiJobReallyComplete = true;
+                        setLoading(false);
+                        setShowRetry(false);
+                        setCurrentStatus('COMPLETED');
+                        setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
+                        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+                    }
                 } else if (data.response && (data.response.answer || data.response.text)) {
                     // Focus input after answer
                     setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
@@ -246,7 +281,7 @@ function ChatApp() {
                     // Defensive: clear timeout as soon as a final answer is rendered
                     if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
                 }
-                if (data.complete || data.failed || data.status === "COMPLETE" || data.status === "FAILED") {
+                if (data.complete || data.failed || data.status === "COMPLETE" || data.status === "COMPLETED" || data.status === "FAILED") {
                     // Set completion flags FIRST
                     didComplete = true;
                     didCompleteRef.current = true;
@@ -257,6 +292,7 @@ function ChatApp() {
                     if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
                     setLoading(false);
                     setShowRetry(false); // Remove retry UI
+                    setCurrentStatus(data.status === "FAILED" ? "FAILED" : "COMPLETED");
                     // Remove spinner/progress and any retry/timeout/interruption error messages from chat
                     setMessages(msgs =>
                         msgs.filter(
@@ -274,6 +310,7 @@ function ChatApp() {
                     // Immediately close the SSE connection and mark as closed
                     es.close();
                     sseClosed = true;
+                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
                     return;
                 }
             } catch (err) {
@@ -419,6 +456,23 @@ function ChatApp() {
     const configWithVersion = config ? { ...config, "app.version": version } : config;
     return React.createElement("div", { className: "app-container" },
         React.createElement(ConnectionInfoBar, { config }),
+        // Progress meter just above status bar
+        (progress !== null && progress > 0 && progress < 100) && React.createElement("div", {
+            style: {
+                width: "100%", maxWidth: 400, margin: "16px auto 0 auto", background: "#e0e0e0", borderRadius: 6, height: 18, position: "relative"
+            }
+        },
+            React.createElement("div", {
+                style: {
+                    width: progress + "%", height: "100%", background: "#1a73e8", borderRadius: 6, transition: "width 0.3s"
+                }
+            }),
+            React.createElement("span", {
+                style: {
+                    position: "absolute", left: 0, right: 0, top: 0, bottom: 0, textAlign: "center", lineHeight: "18px", fontWeight: 500, color: "#222"
+                }
+            }, `${progress}%`)
+        ),
         React.createElement(StatusLogPanel, { statusLog }),
         showConfig && React.createElement(ConfigPanel, { config: configWithVersion, version, onClose: () => setShowConfig(false), lastPrompt }),
         React.createElement("div", { className: "chat-container" },

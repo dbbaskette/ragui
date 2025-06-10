@@ -2,6 +2,9 @@ package com.baskettecase.ragui.model;
 
 import java.util.concurrent.atomic.AtomicReference;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+
 public class Job {
     public enum Status { QUEUED, RUNNING, COMPLETED, FAILED }
     private final String jobId;
@@ -11,10 +14,40 @@ public class Job {
     private volatile String statusMessage;
     private volatile int progress;
 
+    // FIFO event buffer for status events
+    public static class StatusEvent {
+        public final long seq;
+        public final String status;
+        public final String statusMessage;
+        public final int progress;
+        public final long timestamp;
+        public StatusEvent(long seq, String status, String statusMessage, int progress, long timestamp) {
+            this.seq = seq;
+            this.status = status;
+            this.statusMessage = statusMessage;
+            this.progress = progress;
+            this.timestamp = timestamp;
+        }
+    }
+    private final List<StatusEvent> eventBuffer = new CopyOnWriteArrayList<>();
+    private volatile long eventSeq = 0;
+
+    public void addStatusEvent(String status, String statusMessage, int progress) {
+        eventBuffer.add(new StatusEvent(++eventSeq, status, statusMessage, progress, System.currentTimeMillis()));
+    }
+    public List<StatusEvent> getAllEvents() {
+        return eventBuffer;
+    }
+    public List<StatusEvent> getEventsSince(long lastSeq) {
+        return eventBuffer.stream().filter(e -> e.seq > lastSeq).toList();
+    }
+
     public Job(String jobId) {
         this.jobId = jobId;
         this.statusMessage = null;
         this.progress = 0;
+        // Add initial status event
+        addStatusEvent(Status.QUEUED.name(), null, 0);
     }
     public String getJobId() { return jobId; }
     public Status getStatus() { return status.get(); }

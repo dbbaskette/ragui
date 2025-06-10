@@ -36,6 +36,8 @@ public class JobController {
                     job.setStatus(Job.Status.RUNNING);
                     job.setStatusMessage(status);
                     job.setProgress(progress);
+                    // Add status event to FIFO buffer
+                    job.addStatusEvent(Job.Status.RUNNING.name(), status, progress);
                 });
                 // Add a small delay after every status update to allow SSE event loop to emit updates
                 try { Thread.sleep(60); } catch (InterruptedException ignored) {}
@@ -65,60 +67,60 @@ public class JobController {
             org.slf4j.LoggerFactory.getLogger(JobController.class).warn("Job {} not found for SSE", jobId);
             return emitter;
         }
-        // Defensive: If job is already completed or failed, emit result/error and complete emitter immediately
-        if (job.getStatus() == Job.Status.COMPLETED) {
+        // --- FIFO Event Replay Logic ---
+        final long[] lastSeq = {0}; // track the last event seq sent to client
+        // 1. Replay all buffered status events
+        for (Job.StatusEvent event : job.getAllEvents()) {
             try {
-                emitter.send(SseEmitter.event().data("{\"status\":\"COMPLETED\",\"statusMessage\":\"LLM response received\",\"progress\":90}"));
-                emitter.send(SseEmitter.event().data("{\"response\":{\"text\":\"" + escape(job.getResult()) + "\"}}"));
-            } catch (IOException ignored) {}
-            emitter.complete();
-            org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE completed (immediate) for job {}", jobId);
-            return emitter;
-        } else if (job.getStatus() == Job.Status.FAILED) {
-            try {
-                emitter.send(SseEmitter.event().data("{\"status\":\"FAILED\",\"statusMessage\":\"Job failed\",\"progress\":100}"));
-                emitter.send(SseEmitter.event().data("{\"error\":\"" + escape(job.getError()) + "\"}"));
-            } catch (IOException ignored) {}
-            emitter.complete();
-            org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE failed (immediate) for job {}", jobId);
-            return emitter;
+                StringBuilder json = new StringBuilder();
+                json.append("{\"status\":\"").append(event.status).append("\"");
+                if (event.statusMessage != null) {
+                    json.append(",\"statusMessage\":\"").append(escape(event.statusMessage)).append("\"");
+                }
+                json.append(",\"progress\":").append(event.progress);
+                json.append("}");
+                emitter.send(SseEmitter.event().data(json.toString()));
+                lastSeq[0] = event.seq;
+            } catch (IOException e) {
+                org.slf4j.LoggerFactory.getLogger(JobController.class).warn("SSE replay failed for job {}: {}", jobId, e.getMessage());
+            }
         }
+        // 2. Start background thread to stream new events as they are added
         executor.submit(() -> {
-            Job.Status lastStatus = null;
-            String lastStatusMessage = null;
             try {
                 while (true) {
-                    Job.Status status = job.getStatus();
-                    String statusMessage = job.getStatusMessage();
-                    int progress = job.getProgress();
-                    boolean shouldEmit = false;
-                    if (status != lastStatus) shouldEmit = true;
-                    if ((statusMessage != null && !statusMessage.equals(lastStatusMessage)) || (statusMessage == null && lastStatusMessage != null)) shouldEmit = true;
-                    if (shouldEmit) {
-                        // Emit status, statusMessage, and progress as a JSON object
+                    // Get new events since lastSeq
+                    var newEvents = job.getEventsSince(lastSeq[0]);
+                    for (Job.StatusEvent event : newEvents) {
                         StringBuilder json = new StringBuilder();
-                        json.append("{\"status\":\"").append(status).append("\"");
-                        if (statusMessage != null) {
-                            json.append(",\"statusMessage\":\"").append(escape(statusMessage)).append("\"");
+                        json.append("{\"status\":\"").append(event.status).append("\"");
+                        if (event.statusMessage != null) {
+                            json.append(",\"statusMessage\":\"").append(escape(event.statusMessage)).append("\"");
                         }
-                        json.append(",\"progress\":").append(progress);
+                        json.append(",\"progress\":").append(event.progress);
                         json.append("}");
                         emitter.send(SseEmitter.event().data(json.toString()));
-                        lastStatus = status;
-                        lastStatusMessage = statusMessage;
+                        lastSeq[0] = event.seq;
                     }
-                    if (status == Job.Status.COMPLETED) {
-                        emitter.send(SseEmitter.event().data("{\"response\":{\"text\":\"" + escape(job.getResult()) + "\"}}"));
+                    // If job is completed or failed, emit final result/error and complete emitter
+                    if (job.getStatus() == Job.Status.COMPLETED) {
+                        // Send both {"response":{"text":...}} and {"message":...} for frontend compatibility
+                        String llmResult = escape(job.getResult());
+                        org.slf4j.LoggerFactory.getLogger(JobController.class).debug("Emitting LLM message SSE: {}", llmResult);
+                        emitter.send(SseEmitter.event().data("{\"response\":{\"text\":\"" + llmResult + "\"}}"));
+                        emitter.send(SseEmitter.event().data("{\"message\":\"" + llmResult + "\"}"));
+                        emitter.send(SseEmitter.event().data("{\"status\":\"COMPLETED\",\"statusMessage\":\"LLM response received\",\"progress\":90}"));
                         emitter.complete();
                         org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE completed for job {}", jobId);
                         break;
-                    } else if (status == Job.Status.FAILED) {
+                    } else if (job.getStatus() == Job.Status.FAILED) {
+                        emitter.send(SseEmitter.event().data("{\"status\":\"FAILED\",\"statusMessage\":\"Job failed\",\"progress\":100}"));
                         emitter.send(SseEmitter.event().data("{\"error\":\"" + escape(job.getError()) + "\"}"));
                         emitter.complete();
                         org.slf4j.LoggerFactory.getLogger(JobController.class).debug("SSE failed for job {}", jobId);
                         break;
                     }
-                    Thread.sleep(500);
+                    Thread.sleep(200); // Poll for new events every 200ms
                 }
             } catch (Exception e) {
                 try { emitter.send(SseEmitter.event().data("{\"error\":\"" + escape(e.getMessage()) + "\"}")); } catch (IOException ignored) {}
@@ -128,6 +130,7 @@ public class JobController {
         });
         return emitter;
     }
+
 
     private static String escape(String s) {
         return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ");

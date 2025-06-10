@@ -26,3 +26,4 @@ Frontend polling `/api/status` will see these updates in real-time.
 ---
 
 *See also: gotchas.md for edge cases and warnings.*
+
