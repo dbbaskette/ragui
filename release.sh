@@ -1,8 +1,38 @@
 #!/bin/bash
 # release.sh - Increment version in pom.xml, commit, push, and tag release
-# Usage: ./release.sh
+# Usage: ./release.sh [--test]
 
 set -e
+
+if [[ "$1" == "--test" ]]; then
+  echo "Running in TEST mode: will only build and push, no version bump or git commit."
+  main_artifact_id=$(awk '
+    /<parent>/ {in_parent=1}
+    /<\/parent>/ {in_parent=0; next}
+    in_parent {next}
+    /<artifactId>/ && !found {
+      print $0
+      found=1
+    }
+  ' pom.xml | sed -n 's:.*<artifactId>\([^<]*\)</artifactId>.*:\1:p')
+
+  if [[ -z "$main_artifact_id" ]]; then
+    echo "Could not auto-detect main artifactId from pom.xml"
+    exit 1
+  fi
+  current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; while (!/<version>/) getline; gsub(/.*<version>|<\/version>.*/, ""); print $0; exit}' pom.xml)
+  echo "Main artifactId: $main_artifact_id"
+  echo "Current version: $current_version"
+
+  echo "Building JAR with mvn clean package..."
+  mvn clean package
+  echo "Ensuring manifest.yml uses current JAR: target/${main_artifact_id}-$current_version.jar"
+  sed -i.bak "s|path: .*|path: target/${main_artifact_id}-$current_version.jar|" manifest.yml && rm manifest.yml.bak
+  echo "Pushing to Cloud Foundry..."
+  cf push
+  echo "Test build and push complete."
+  exit 0
+fi
 
 # 1. Get current branch
 git_branch=$(git rev-parse --abbrev-ref HEAD)

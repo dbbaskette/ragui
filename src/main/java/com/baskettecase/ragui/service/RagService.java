@@ -88,8 +88,9 @@ public class RagService {
     void onStatus(String statusMessage, int progress);
 }
 
+private static final int TIMEOUT_SECONDS = 180;
+
 public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) {
-        final int TIMEOUT_SECONDS = 180;
         ExecutorService timeoutExecutor = Executors.newSingleThreadExecutor();
         String answer;
         String source = "RAG";
@@ -103,8 +104,14 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
             logger.info("[{}] Job started for message: {}", Instant.now(), request.getMessage());
             // If Raw RAG mode is enabled, return concatenated DB results without LLM summarization
             if (request.isRawRag()) {
+                if (statusListener != null) statusListener.onStatus("Sending Prompt to LLM for Pre-Processing", 15);
+                String originalPrompt = request.getMessage();
+                String cleanedPrompt = cleanQueryWithLlm(originalPrompt, "RAW RAG");
+                if (statusListener != null) statusListener.onStatus("Pre-Processed Query returned", 18);
+                logger.info("[Raw RAG] Original user prompt: {}", originalPrompt);
+                logger.info("[Raw RAG] Cleaned/rephrased prompt: {}", cleanedPrompt);
                 if (statusListener != null) statusListener.onStatus("Querying vector DB for raw context", 20);
-                Query query = new Query(request.getMessage());
+                Query query = new Query(cleanedPrompt);
                 List<Document> docs = null;
                 try {
                     logger.info("[{}] Vector DB (Raw RAG) call started", Instant.now());
@@ -131,7 +138,7 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
                     answer = "--- RAW RAG MODE: Concatenated DB Results ---\n" + result + "\n\nSource: RAW_RAG (raw DB text, no LLM)";
                 }
                 source = "RAW_RAG";
-                logger.debug("Raw RAG response for message '{}': {}", request.getMessage(), answer);
+                logger.debug("Raw RAG response for message '{}': {}", cleanedPrompt, answer);
             } else if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
                 logger.debug("Using Pure LLM mode for message: {}", request.getMessage());
@@ -222,16 +229,22 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
                 source = "LLM";
                 logger.debug("LLM response for message '{}' with context: {}: {}", request.getMessage(), contextText != null, answer);
             } else {
-                // RAG Only: use LLM to summarize context as answer, or fallback if no context
+                // RAG Only: pre-process query via LLM, then use for vector search
                 logger.debug("RAG Only mode for message: {}", request.getMessage());
+                if (statusListener != null) statusListener.onStatus("Sending Prompt to LLM for Pre-Processing", 15);
+                String originalPrompt = request.getMessage();
+                String cleanedPrompt = cleanQueryWithLlm(originalPrompt, "RAG ONLY");
+                if (statusListener != null) statusListener.onStatus("Pre-Processed Query returned", 18);
                 if (statusListener != null) statusListener.onStatus("Querying vector DB for relevant context", 20);
-                Query query = new Query(request.getMessage());
+                Query query = new Query(cleanedPrompt);
                 List<Document> docs = null;
                 try {
+                    if (statusListener != null) statusListener.onStatus("Vector DB (RAG Only) call started", 22);
                     logger.info("[{}] Vector DB (RAG Only) call started", Instant.now());
                     docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), timeoutExecutor)
                         .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     logger.info("[{}] Vector DB (RAG Only) call finished", Instant.now());
+                    if (statusListener != null) statusListener.onStatus("Vector DB (RAG Only) call finished", 25);
                 } catch (TimeoutException te) {
                     logger.error("Vector DB (RAG Only) call timed out after {}s", TIMEOUT_SECONDS);
                     throw new RuntimeException("Vector DB (RAG Only) call timed out");
@@ -311,5 +324,33 @@ public ChatResponse chat(ChatRequest request, RagStatusListener statusListener) 
         }
     }
     
+    /**
+     * Helper method to clean and rephrase user queries via LLM with a system prompt.
+     * Logs both the original and cleaned prompts.
+     */
+    private String cleanQueryWithLlm(String originalPrompt, String modeTag) {
+        String systemPrompt = "You are an AI assistant that serves as an expert query pre-processor for a technical knowledge base for users based on documents you are given.  Your task is to correct any spelling and grammatical errors in the following user query and rephrase it into a clear, unambiguous question. The output will be used to perform a vector search against the documentation. Provide only the corrected and rephrased query. Do not answer the question.";
+        String cleanedPrompt = null;
+        ExecutorService timeoutExecutor = Executors.newSingleThreadExecutor();
+        try {
+            logger.info("[{}] [{}] LLM (Query Cleaning) call started", Instant.now(), modeTag);
+            cleanedPrompt = CompletableFuture.supplyAsync(() -> chatClient.prompt()
+                .system(systemPrompt)
+                .user(originalPrompt)
+                .call()
+                .content(), timeoutExecutor)
+                .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            logger.info("[{}] [{}] LLM (Query Cleaning) call finished", Instant.now(), modeTag);
+        } catch (TimeoutException te) {
+            logger.error("LLM (Query Cleaning) call timed out after {}s [{}]", TIMEOUT_SECONDS, modeTag);
+            throw new RuntimeException("LLM (Query Cleaning) call timed out");
+        } catch (Exception e) {
+            logger.error("LLM (Query Cleaning) failed [{}]: {}", modeTag, e.getMessage(), e);
+            throw new RuntimeException("LLM (Query Cleaning) failed: " + e.getMessage(), e);
+        }
+        logger.info("[{}] Original user prompt: {}", modeTag, originalPrompt);
+        logger.info("[{}] Cleaned/rephrased prompt: {}", modeTag, cleanedPrompt);
+        return cleanedPrompt;
+    }
 
 }

@@ -83,18 +83,13 @@ function StatusLogPanel({ statusLog }) {
 }
 
 function ChatApp() {
-    // Always show app title at the top
-    const appTitleBar = React.createElement("div", { className: "chat-header" },
-        React.createElement("h2", null, "Tanzu RAG Chat"),
-        React.createElement("button", {
-            className: "config-btn",
-            onClick: () => setShowConfig(true)
-        }, "⚙")
-    );
+    // Move all state and ref declarations to the top
     const [statusLog, setStatusLog] = React.useState([]);
+    const [currentStatus, setCurrentStatus] = React.useState("");
+    const [progress, setProgress] = React.useState(null);
     const [jobId, setJobId] = React.useState(null); // Track current jobId for SSE
-
     const [input, setInput] = React.useState("");
+    const inputRef = React.useRef(null);
     const [messages, setMessages] = React.useState([]);
     const [loading, setLoading] = React.useState(false);
     const [llmMode, setLlmMode] = React.useState('rag-with-fallback'); // 'rag-only', 'rag-with-fallback', 'pure-llm', 'raw-rag'
@@ -106,10 +101,37 @@ function ChatApp() {
     const [lastPrompt, setLastPrompt] = React.useState("");
     // Track if an AI answer has been received for this job
     const aiAnswerReceivedRef = React.useRef(false);
+
+    // Always show app title at the top
+    const appTitleBar = React.createElement("div", { className: "chat-header" },
+        React.createElement("h2", null, "Tanzu RAG Chat"),
+        React.createElement("button", {
+            className: "config-btn",
+            onClick: () => setShowConfig(true)
+        }, "\u2699"),
+        currentStatus && React.createElement("div", {
+            style: {
+                marginTop: 10, fontWeight: 500, fontSize: "1.1em", color: "#1a73e8", background: "#f2f8fd", padding: "6px 12px", borderRadius: 6, maxWidth: 700
+            }
+        }, currentStatus),
+        (progress !== null && progress > 0 && progress < 100) && React.createElement("div", {
+            style: {
+                margin: "8px 0 0 0", width: 220, height: 8, background: "#e0e0e0", borderRadius: 4, overflow: "hidden"
+            }
+        },
+            React.createElement("div", {
+                style: {
+                    width: progress + "%", height: "100%", background: "#1a73e8", borderRadius: 4, transition: "width 0.3s"
+                }
+            })
+        )
+    );
     // SSE subscription for backend status updates
     React.useEffect(() => {
         if (!jobId) return;
         setLoading(true);
+        // Track if job is done for this effect (prevents post-completion error/timeout handling)
+        let jobReallyDone = false;
         setStatusLog([]);
         // Only remove spinner/progress messages, keep user prompt
         // Do not remove spinner/progress messages here; only remove after completion.
@@ -121,7 +143,7 @@ function ChatApp() {
         const didFailRef = { current: false };
         let sseClosed = false;
         let timeoutId = setTimeout(() => {
-            if (didCompleteRef.current || didFailRef.current) {
+            if (jobReallyDone || window.__raguiJobReallyComplete || didCompleteRef.current || didFailRef.current) {
                 console.log("[SSE] Timeout fired, but already complete/failed; ignoring.");
                 return;
             }
@@ -145,9 +167,40 @@ function ChatApp() {
                 const data = JSON.parse(event.data);
                 // Prefer statusMessage if present, else fallback to status
                 if (data.statusMessage || data.status_message) {
-                    setStatusLog(log => [...log, data.statusMessage || data.status_message]);
+                    setStatusLog(log => {
+                        const msg = data.statusMessage || data.status_message;
+                        if (log.length === 0 || log[log.length - 1] !== msg) {
+                            return [...log, msg];
+                        }
+                        return log;
+                    });
+                    setCurrentStatus(data.statusMessage || data.status_message);
+                    // Also show all status messages as system messages in chat (not just in status log)
+                    setMessages(msgs => {
+                        const msg = data.statusMessage || data.status_message;
+                        // Only add if not a duplicate of the last system message
+                        if (msgs.length === 0 || !(msgs[msgs.length - 1].system && msgs[msgs.length - 1].text === msg)) {
+                            return [...msgs, { sender: "system", text: msg, system: true }];
+                        }
+                        return msgs;
+                    });
+                    // Defensive: Mark job as done if status indicates completion
+                    if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+                        window.__raguiJobReallyComplete = true;
+                        if (typeof es !== 'undefined') es.close();
+                        return;
+                    }
                 } else if (data.status) {
-                    setStatusLog(log => [...log, data.status]);
+                    setStatusLog(log => {
+                        if (log.length === 0 || log[log.length - 1] !== data.status) {
+                            return [...log, data.status];
+                        }
+                        return log;
+                    });
+                    setCurrentStatus(data.status);
+                }
+                if (typeof data.progress === "number") {
+                    setProgress(data.progress);
                 }
                 // Show constructed prompt as a system message if present
                 if (data.response && data.response.prompt) {
@@ -166,82 +219,109 @@ function ChatApp() {
                 }
                 // Show AI response if present (either as 'message' or as 'response.answer')
                 if (data.message) {
+                    // Focus input after answer
+                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
                     aiAnswerReceivedRef.current = true;
+                    jobReallyDone = true;
+                    window.__raguiJobReallyComplete = true;
                     setMessages(msgs => {
                         const updated = [...msgs.filter(m => !m.spinner), { sender: data.sender || "llm", text: data.message, spinner: false }];
                         console.log("After AI message (message):", updated);
                         return updated;
                     });
+                    // Defensive: clear timeout as soon as a final answer is rendered
+                    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
                 } else if (data.response && (data.response.answer || data.response.text)) {
+                    // Focus input after answer
+                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
                     aiAnswerReceivedRef.current = true;
+                    jobReallyDone = true;
+                    window.__raguiJobReallyComplete = true;
                     setMessages(msgs => {
                         const answer = data.response.answer || data.response.text;
                         const updated = [...msgs.filter(m => !m.spinner), { sender: "llm", text: answer, spinner: false }];
                         console.log("After AI message (response):", updated);
                         return updated;
                     });
+                    // Defensive: clear timeout as soon as a final answer is rendered
+                    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
                 }
                 if (data.complete || data.failed || data.status === "COMPLETE" || data.status === "FAILED") {
-            // Set completion flags FIRST
-            didComplete = true;
-            didCompleteRef.current = true;
-            if (data.status === "FAILED") {
-                didFail = true;
-                didFailRef.current = true;
+                    // Set completion flags FIRST
+                    didComplete = true;
+                    didCompleteRef.current = true;
+                    if (data.status === "FAILED") {
+                        didFail = true;
+                        didFailRef.current = true;
+                    }
+                    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+                    setLoading(false);
+                    setShowRetry(false); // Remove retry UI
+                    // Remove spinner/progress and any retry/timeout/interruption error messages from chat
+                    setMessages(msgs =>
+                        msgs.filter(
+                            m =>
+                                !m.spinner &&
+                                m.text !== "AI response interrupted or connection lost before completion." &&
+                                m.text !== "Timed out waiting for response from backend."
+                        )
+                    );
+                    // Mark job as really done for this effect
+                    jobReallyDone = true;
+                    window.__raguiJobReallyComplete = true;
+                    // Immediately clear closeCheck so no interruption message can be shown after completion
+                    if (typeof closeCheck !== 'undefined') clearInterval(closeCheck);
+                    // Immediately close the SSE connection and mark as closed
+                    es.close();
+                    sseClosed = true;
+                    return;
+                }
+            } catch (err) {
+                setStatusLog(log => [...log, "Malformed SSE message: " + event.data]);
+                console.log("[SSE] Malformed SSE message", event.data);
             }
-            clearTimeout(timeoutId);
-            setLoading(false);
-            setShowRetry(false); // Remove retry UI
-            // Remove spinner/progress and any retry/timeout/interruption error messages from chat
-            setMessages(msgs =>
-                msgs.filter(
-                    m =>
-                        !m.spinner &&
-                        m.text !== "AI response interrupted or connection lost before completion." &&
-                        m.text !== "Timed out waiting for response from backend."
-                )
-            );
-            // Immediately close the SSE connection and mark as closed
-            es.close();
-            sseClosed = true;
-        }
-    } catch (err) {
-        setStatusLog(log => [...log, "Malformed SSE message: " + event.data]);
-        console.log("[SSE] Malformed SSE message", event.data);
-    }
-};
+        };
         es.onerror = () => {
+            if (jobReallyDone || window.__raguiJobReallyComplete) return;
             if (didCompleteRef.current || didFailRef.current) {
-                // Ignore errors after job is done
+                // Ignore errors and do not show connection lost/interruption messages after job is done
                 return;
             }
             if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
             setStatusLog(log => [...log, "SSE connection lost."]);
-            setMessages(msgs => {
-                // Only show interruption message if NO AI answer was ever received for this job
-                const filtered = msgs.filter(m => !m.spinner);
-                if (!aiAnswerReceivedRef.current) {
-                    return [
-                        ...filtered,
-                        { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
-                    ];
-                } else {
-                    return filtered;
-                }
-            });
-            setLoading(false);
-            setShowRetry(true);
-            sseClosed = true;
+            // Only show interruption message and retry UI if job did NOT complete
+            if (!didCompleteRef.current && !didFailRef.current && !window.__raguiJobReallyComplete) {
+                setMessages(msgs => {
+                    // Only show interruption message if NO AI answer was ever received for this job
+                    const filtered = msgs.filter(m => !m.spinner);
+                    if (!aiAnswerReceivedRef.current) {
+                        return [
+                            ...filtered,
+                            { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
+                        ];
+                    } else {
+                        return filtered;
+                    }
+                });
+                setLoading(false);
+                setShowRetry(true);
+            }
+            if (!didCompleteRef.current && !didFailRef.current && !window.__raguiJobReallyComplete) {
+                sseClosed = true;
+            }
             es.close();
         };
 
-        // Custom close detection (not native in EventSource)
-        const closeCheck = setInterval(() => {
+        let closeCheck = setInterval(() => {
+            if (jobReallyDone || window.__raguiJobReallyComplete) {
+                clearInterval(closeCheck);
+                return;
+            }
             if (didCompleteRef.current || didFailRef.current) {
                 clearInterval(closeCheck);
                 return;
             }
-            if (sseClosed && !didCompleteRef.current && !didFailRef.current) {
+            if (sseClosed && !didCompleteRef.current && !didFailRef.current && !window.__raguiJobReallyComplete) {
                 setStatusLog(log => [...log, "AI response interrupted or connection lost before completion."]);
                 setMessages(msgs => [
                     ...msgs.filter(m => !m.spinner),
@@ -406,9 +486,9 @@ function ChatApp() {
                             value: input,
                             onChange: e => setInput(e.target.value),
                             disabled: loading,
-                            placeholder: "Type your message...",
-                            autoFocus: true,
-                            style: { width: "100%", fontSize: "1.08em", padding: "10px", borderRadius: "6px", border: "1px solid #ccc", marginBottom: 0 }
+                            placeholder: loading ? "Waiting for response..." : "Type your question here and press Enter",
+                            style: { marginRight: 10, width: 420, maxWidth: "90%" },
+                            ref: inputRef
                         }),
                         React.createElement("button", { type: "submit", disabled: loading, style: { marginTop: 8 } }, loading ? "..." : "Send")
                     )
