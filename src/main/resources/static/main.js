@@ -1,4 +1,4 @@
-const MAIN_JS_VERSION = "0.3.5";
+const MAIN_JS_VERSION = "0.3.7";
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages

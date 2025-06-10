@@ -48,15 +48,6 @@ current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline
 echo "Main artifactId: $main_artifact_id"
 echo "Current version: $current_version"
 
-# --- Sync MAIN_JS_VERSION in main.js with current_version ---
-JS_SRC="src/main/resources/static/main.js"
-if [[ -f "$JS_SRC" ]]; then
-  echo "Updating MAIN_JS_VERSION in $JS_SRC to $current_version"
-  sed -i.bak -E 's/^(const MAIN_JS_VERSION = ")[^"]+(";)/\1'$current_version'\2/' "$JS_SRC"
-  rm "$JS_SRC.bak"
-else
-  echo "Warning: $JS_SRC not found, cannot update MAIN_JS_VERSION."
-fi
 
 # 3. Increment patch version (x.y.z -> x.y.$((z+1)))
 if [[ "$1" != "--test" && "$1" != "--local" ]]; then
@@ -92,6 +83,16 @@ if [[ "$1" != "--test" && "$1" != "--local" ]]; then
     {print}
   ' pom.xml > pom.xml.tmp && mv pom.xml.tmp pom.xml
   echo "pom.xml updated."
+
+  # --- Sync MAIN_JS_VERSION in main.js with new_version ---
+  JS_SRC="src/main/resources/static/main.js"
+  if [[ -f "$JS_SRC" ]]; then
+    echo "Updating MAIN_JS_VERSION in $JS_SRC to $new_version"
+    sed -i.bak -E 's/^(const MAIN_JS_VERSION = ")[^"]+(";)/\1'$new_version'\2/' "$JS_SRC"
+    rm "$JS_SRC.bak"
+  else
+    echo "Warning: $JS_SRC not found, cannot update MAIN_JS_VERSION."
+  fi
 fi
 
 # 4b. Ensure main.js exists and is referenced in index.html
