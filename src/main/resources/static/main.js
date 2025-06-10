@@ -1,4 +1,4 @@
-const MAIN_JS_VERSION = "0.3.2";
+const MAIN_JS_VERSION = "0.3.3";
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages
@@ -57,18 +57,6 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
     );
 }
 
-function ConnectionInfoBar({ config }) {
-    if (!config) return null;
-    // Use new config keys
-    let dbPlan = config["embed-db.plan"] || "?";
-    let chatModel = config["chat-model.model_name"] || "?";
-    let embedModel = config["embed-model.model_name"] || "?";
-    return React.createElement("div", { className: "connection-info-bar" },
-        React.createElement("div", { className: "connection-info-item" }, `Database Plan: ${dbPlan}`),
-        React.createElement("div", { className: "connection-info-item" }, `Chat Model: ${chatModel}`),
-        React.createElement("div", { className: "connection-info-item" }, `Embedding Model: ${embedModel}`)
-    );
-}
 
 // StatusLogPanel: shows backend status/progress messages at the bottom
 function StatusLogPanel({ statusLog }) {
@@ -455,7 +443,6 @@ function ChatApp() {
     // Add version to config for display in the config list
     const configWithVersion = config ? { ...config, "app.version": version } : config;
     return React.createElement("div", { className: "app-container" },
-        React.createElement(ConnectionInfoBar, { config }),
         // Progress meter just above status bar
         (progress !== null && progress > 0 && progress < 100) && React.createElement("div", {
             style: {

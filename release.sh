@@ -22,66 +22,11 @@ if [[ "$1" == "--local" ]]; then
   exit 0
 fi
 
-if [[ "$1" == "--test" ]]; then
-  echo "Running in TEST mode: will only build and push, no version bump or git commit."
-  # Parse app name from manifest.yml
-  app_name=$(grep 'name:' manifest.yml | head -1 | sed 's/.*name:[[:space:]]*//')
-  if [[ -n "$app_name" ]]; then
-    # Print delete step in bold yellow with separators for visibility
-    YELLOW='\033[1;33m'
-    NC='\033[0m' # No Color
-    echo -e "${YELLOW}==============================${NC}"
-    echo -e "${YELLOW}Deleting existing CF app: $app_name (to avoid route caching)${NC}"
-    echo -e "${YELLOW}==============================${NC}"
-    cf delete "$app_name" -f -r || true
-    echo -e "${YELLOW}-------- Delete step complete --------${NC}"
+# Shared logic for both --test and release
 
-  fi
-  main_artifact_id=$(awk '
-    /<parent>/ {in_parent=1}
-    /<\/parent>/ {in_parent=0; next}
-    in_parent {next}
-    /<artifactId>/ && !found {
-      print $0
-      found=1
-    }
-  ' pom.xml | sed -n 's:.*<artifactId>\([^<]*\)</artifactId>.*:\1:p')
+# Parse app name from manifest.yml (used for route printing)
+app_name=$(grep 'name:' manifest.yml | head -1 | sed 's/.*name:[[:space:]]*//')
 
-  if [[ -z "$main_artifact_id" ]]; then
-    echo "Could not auto-detect main artifactId from pom.xml"
-    exit 1
-  fi
-  current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; while (!/<version>/) getline; gsub(/.*<version>|<\/version>.*/, ""); print $0; exit}' pom.xml)
-  echo "Main artifactId: $main_artifact_id"
-  echo "Current version: $current_version"
-
-  # Ensure only one MAIN_JS_VERSION assignment at the top of main.js
-  mainjs="src/main/resources/static/main.js"
-  tmpfile="${mainjs}.tmp"
-  # Remove any existing MAIN_JS_VERSION assignment
-  grep -v '^const MAIN_JS_VERSION = ' "$mainjs" > "$tmpfile" || true
-  # Insert the correct version at the top
-  echo "const MAIN_JS_VERSION = \"$current_version\";" > "${mainjs}.new"
-  cat "$tmpfile" >> "${mainjs}.new"
-  mv "${mainjs}.new" "$mainjs"
-  rm -f "$tmpfile"
-
-  echo "Building JAR with mvn clean package..."
-  mvn clean package
-  echo "Ensuring manifest.yml uses current JAR: target/${main_artifact_id}-$current_version.jar"
-  sed -i.bak "s|path: .*|path: target/${main_artifact_id}-$current_version.jar|" manifest.yml && rm manifest.yml.bak
-  echo "Pushing to Cloud Foundry..."
-  cf push
-  echo "Test build and push complete."
-  exit 0
-fi
-
-# 1. Get current branch
-git_branch=$(git rev-parse --abbrev-ref HEAD)
-echo "Current git branch: $git_branch"
-
-# 2. Get the main artifactId and its version from pom.xml (not the parent)
-# Auto-detect the main artifactId (first <artifactId> outside <parent> block)
 # Auto-detect the main artifactId (first <artifactId> outside <parent> block)
 main_artifact_id=$(awk '
   /<parent>/ {in_parent=1}
@@ -104,38 +49,40 @@ echo "Main artifactId: $main_artifact_id"
 echo "Current version: $current_version"
 
 # 3. Increment patch version (x.y.z -> x.y.$((z+1)))
-IFS='.' read -r major minor patch <<< "$current_version"
-if [[ -z "$patch" ]]; then
-  echo "Could not parse version from pom.xml"
-  exit 1
-fi
-next_patch=$((patch+1))
-new_version="$major.$minor.$next_patch"
-echo "Bumping version to: $new_version"
-
-echo -n "Proceed with release v$new_version? [y/N]: "
-read answer
-if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-  echo "Aborted by user. No changes made."
-  exit 0
+if [[ "$1" != "--test" && "$1" != "--local" ]]; then
+  IFS='.' read -r major minor patch <<< "$current_version"
+  if [[ -z "$patch" ]]; then
+    echo "Could not parse version from pom.xml"
+    exit 1
+  fi
+  next_patch=$((patch+1))
+  new_version="$major.$minor.$next_patch"
+  echo "Bumping version to: $new_version"
+  echo -n "Proceed with release v$new_version? [y/N]: "
+  read answer
+  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+    echo "Aborted by user. No changes made."
+    exit 0
+  fi
 fi
 
 # 4. Update only the correct <version> tag in pom.xml (the one after <artifactId>ragui</artifactId>)
-awk -v aid="$main_artifact_id" -v newver="$new_version" '
-  BEGIN {found=0}
-  /<artifactId>/ && $0 ~ aid {
-    found=1
-    print
-    next
-  }
-  found && /<version>/ {
-    sub(/<version>[^<]+<\/version>/, "<version>" newver "</version>")
-    found=0
-  }
-  {print}
-' pom.xml > pom.xml.tmp && mv pom.xml.tmp pom.xml
-
-echo "pom.xml updated."
+if [[ "$1" != "--test" && "$1" != "--local" ]]; then
+  awk -v aid="$main_artifact_id" -v newver="$new_version" '
+    BEGIN {found=0}
+    /<artifactId>/ && $0 ~ aid {
+      found=1
+      print
+      next
+    }
+    found && /<version>/ {
+      sub(/<version>[^<]+<\/version>/, "<version>" newver "</version>")
+      found=0
+    }
+    {print}
+  ' pom.xml > pom.xml.tmp && mv pom.xml.tmp pom.xml
+  echo "pom.xml updated."
+fi
 
 # 4b. Ensure main.js exists and is referenced in index.html
 STATIC_DIR="src/main/resources/static"
@@ -155,6 +102,26 @@ else
   sed -i.bak 's|<script src="main\.[^"]*\.js"></script>|<script src="main.js"></script>|g' "$INDEX_HTML"
   rm "$INDEX_HTML.bak"
   echo "Updated $INDEX_HTML to reference main.js"
+fi
+
+if [[ "$1" == "--test" ]]; then
+  echo -e "\033[1;33mTEST mode: will build, push to CF, and print route summary.\033[0m"
+  if cf app "$app_name" &> /dev/null; then
+    echo -e "\033[1;33mDeleting existing app $app_name...\033[0m"
+    cf delete "$app_name" -f
+  fi
+  echo "Building JAR with mvn clean package..."
+  mvn clean package
+  echo "Updating manifest.yml with new JAR path: target/${main_artifact_id}-${current_version}.jar"
+  sed -i.bak "s|path: .*|path: target/${main_artifact_id}-${current_version}.jar|" manifest.yml && rm manifest.yml.bak
+  echo "Pushing to Cloud Foundry..."
+  cf push
+  echo "Test build and push complete."
+  echo -e "\n\033[1;35m==================== DEPLOYED APP ROUTE(S) ====================\033[0m"
+  cf app "$app_name" | grep -i 'routes:' -A 1 | sed 's/^/    /'
+  echo -e "\033[1;32m\nApp Route(s) above. Open in your browser to test the deployment.\033[0m"
+  echo -e "\033[1;35m==============================================================\033[0m\n"
+  exit 0
 fi
 
 # 5. Git add, commit, push
@@ -190,6 +157,10 @@ if [[ "$deploy_answer" =~ ^[Yy]$ ]]; then
   sed -i.bak "s|path: .*|path: target/${main_artifact_id}-$new_version.jar|" manifest.yml && rm manifest.yml.bak
   echo "Pushing to Cloud Foundry..."
   cf push
+  echo -e "\n\033[1;35m==================== DEPLOYED APP ROUTE(S) ====================\033[0m"
+  cf app "$app_name" | grep -i 'routes:' -A 1 | sed 's/^/    /'
+  echo -e "\033[1;32m\nApp Route(s) above. Open in your browser to test the deployment.\033[0m"
+  echo -e "\033[1;35m==============================================================\033[0m\n"
 else
   echo "Skipping build and Cloud Foundry deployment."
 fi
