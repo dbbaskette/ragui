@@ -1,4 +1,4 @@
-const MAIN_JS_VERSION = "0.3.8";
+const MAIN_JS_VERSION = "0.3.9";
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages
@@ -23,9 +23,15 @@ function ConstructedPromptMessage({ text }) {
 
 
 function ConfigPanel({ config, version, onClose, lastPrompt }) {
-    if (!config) return null;
+    console.log("[ConfigPanel] Rendering. Props:", { config, version, lastPrompt });
+    if (!config) {
+        console.log("[ConfigPanel] config is falsy, returning null.");
+        return null;
+    }
     // Exclude app.version from the config entries since it's shown in the header
-    const configEntries = Object.entries(config).filter(([k]) => k !== "app.version");
+    const configEntries = Object.entries(config).filter(([key]) =>
+        !['app.version', 'MAIN_JS_VERSION', 'last_prompt'].includes(key)
+    );
     return React.createElement("div", { className: "config-panel-overlay" },
         React.createElement("div", { className: "config-panel" },
             React.createElement("div", { className: "config-header" },
@@ -40,10 +46,6 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
                 React.createElement("span", { className: "config-value" }, (config && config["app.version"]) || version || "unknown"),
                 React.createElement("span", { style: { marginLeft: 12 } }, "Main.js Version: "),
                 React.createElement("span", { className: "config-value" }, typeof MAIN_JS_VERSION !== "undefined" ? MAIN_JS_VERSION : "unknown")
-            ),
-            React.createElement("div", { className: "config-last-prompt" },
-                React.createElement("strong", null, "Last prompt: "),
-                React.createElement("span", { className: "config-value" }, lastPrompt || "(none)")
             ),
             React.createElement("div", { className: "config-content" },
                 configEntries.map(([key, value]) =>
@@ -87,7 +89,7 @@ function ChatApp() {
     const [llmMode, setLlmMode] = React.useState('rag-only'); // Default to 'RAG Only' mode
     const [showConfig, setShowConfig] = React.useState(false);
     const [config, setConfig] = React.useState(null);
-    const [version, setVersion] = React.useState(null);
+    // const [version, setVersion] = React.useState(null); // App version from /api/version will be merged into config state
     const [retryKey, setRetryKey] = React.useState(0);
     const [showRetry, setShowRetry] = React.useState(false);
     const [lastPrompt, setLastPrompt] = React.useState("");
@@ -153,6 +155,7 @@ function ChatApp() {
             console.warn(`[SSE] Prevented SSE connection for already completed jobId ${jobId}`);
             setLoading(false);
             setShowRetry(false);
+            setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
             return;
         }
         window.__raguiJobLastJobId = jobId;
@@ -182,6 +185,7 @@ function ChatApp() {
                     if (data.status === 'COMPLETED' || data.status === 'FAILED') {
                         window.__raguiJobReallyComplete = true;
                         if (typeof es !== 'undefined') es.close();
+                        setLoading(false); // Ensure loading is false
                         setProgress(100);
                         setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
                         return;
@@ -204,8 +208,8 @@ function ChatApp() {
                         setLoading(false);
                         setShowRetry(false);
                         setCurrentStatus('COMPLETED');
+                        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; } // Moved up
                         setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-                        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
                     }
                 } else if (data.status) {
                     setStatusLog(log => {
@@ -257,8 +261,6 @@ function ChatApp() {
                         if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
                     }
                 } else if (data.response && (data.response.answer || data.response.text)) {
-                    // Focus input after answer
-                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
                     aiAnswerReceivedRef.current = true;
                     jobReallyDone = true;
                     window.__raguiJobReallyComplete = true;
@@ -268,8 +270,10 @@ function ChatApp() {
                         console.log("After AI message (response):", updated);
                         return updated;
                     });
+                    setLoading(false); // Ensure loading is false
                     // Defensive: clear timeout as soon as a final answer is rendered
                     if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0); // Focus after state updates
                 }
                 if (data.complete || data.failed || data.status === "COMPLETE" || data.status === "COMPLETED" || data.status === "FAILED") {
                     // Set completion flags FIRST
@@ -300,6 +304,7 @@ function ChatApp() {
                     // Immediately close the SSE connection and mark as closed
                     es.close();
                     sseClosed = true;
+                    // setLoading(false) already called
                     setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
                     return;
                 }
@@ -384,18 +389,24 @@ function ChatApp() {
         document.title = "Tanzu RAG Chat";
         Promise.all([
             fetch("/api/config/properties").then(res => res.json()),
-            fetch("/api/version").then(res => res.json()).then(data => data.version)
-        ]).then(([config, version]) => {
-            setConfig(config);
-            setVersion(version);
-        }).catch(err => console.error("Failed to load config/version:", err));
-    }, [jobId]);
+            fetch("/api/version").then(res => res.json()) // Keep full response to get data.version
+        ]).then(([configData, versionResponse]) => {
+            const appVersion = versionResponse && versionResponse.version;
+            console.log("[INIT] Fetched /api/config/properties:", configData);
+            console.log("[INIT] Fetched /api/version (version value):", appVersion);
+            const combinedConfig = { ...configData, "app.version": appVersion };
+            setConfig(combinedConfig);
+            // setVersion(appVersion); // No longer using separate version state in ChatApp if merged into config
+        }).catch(err => console.error("Failed to load initial config/version:", err));
+    }, []); // Empty dependency array: fetch only once on mount
 
     // Send chat message and trigger SSE job status updates
     const sendMessage = async (e) => {
         e.preventDefault();
         if (!input.trim()) return;
+        aiAnswerReceivedRef.current = false; // Reset for new prompt
         setLoading(true);
+        setProgress(null); // Reset progress for new job
         setStatusLog([]); // Clear status log for new job
         setMessages(msgs => {
             const updated = [
@@ -407,33 +418,36 @@ function ChatApp() {
             return updated;
         });
         setLastPrompt(input); // Track last user prompt
-        setInput("");
+        // Note: setInput("") will be called after successful job submission
         try {
-            // Submit job to new backend API
             const response = await fetch("/api/job", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    message: input,
+                    message: input, // use the original 'input' state here
                     includeLlmFallback: llmMode === "rag-with-fallback",
                     usePureLlm: llmMode === "pure-llm",
                     rawRag: llmMode === "raw-rag"
                 })
             });
-            if (!response.ok) throw new Error("Backend error: " + response.status);
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Backend error: ${response.status} ${errorText}`);
+            }
             const data = await response.json();
             if (!data.jobId) {
-                throw new Error("No jobId returned from backend");
+                throw new Error("No jobId received from backend.");
             }
             setJobId(data.jobId); // Triggers SSE useEffect to handle status/progress
-            // (No need to add extra spinner message here; already added above)
-
-        } catch (err) {
+            setInput(""); // Clear input only after successful job submission
+        } catch (error) {
+            console.error("Failed to send message or create job:", error);
             setMessages(msgs => [
-                ...msgs,
-                { sender: "llm", text: `Error: Could not reach backend. ${err && err.message ? err.message : ''}` }
+                ...msgs.filter(m => !m.spinner), // Remove the 'AI is thinking...' spinner
+                { sender: "llm", text: `Error: Could not start job. ${error.message}`, spinner: false }
             ]);
-            setLoading(false);
+            setLoading(false); // Ensure loading is false on initial send error
+            setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0); // Attempt to focus
         }
     };
 
@@ -442,9 +456,16 @@ function ChatApp() {
         if (el) el.scrollTop = el.scrollHeight;
     }, [messages]);
 
-    // Add version to config for display in the config list
-    const configWithVersion = config ? { ...config, "app.version": version } : config;
+    // const configWithVersion = config ? { ...config, "app.version": version } : config; // Removed: app.version is now directly in 'config' state
+    console.log("[ChatApp] Rendering. State: showConfig:", showConfig, "config loaded:", !!config);
     return React.createElement("div", { className: "app-container" },
+        // ConfigPanel is rendered here if showConfig is true
+        showConfig && React.createElement(ConfigPanel, {
+            config: config, // Pass the combined config (which includes app.version)
+            version: MAIN_JS_VERSION, // This is for 'Main.js Version'
+            onClose: () => setShowConfig(false),
+            lastPrompt: lastPrompt
+        }),
         React.createElement("div", { className: "main-content-row" },
             React.createElement("div", { className: "chat-container" },
                 React.createElement("div", { className: "chat-header" },
@@ -459,7 +480,13 @@ function ChatApp() {
                     ),
                     React.createElement("button", { 
                         className: "config-btn",
-                        onClick: () => setShowConfig(true),
+                        onClick: () => {
+                        console.log('[ChatApp] Gear icon clicked. Current showConfig:', showConfig);
+                        setShowConfig(true);
+                        // Note: The actual state update is asynchronous, so logging showConfig immediately after setShowConfig(true)
+                        // might still show the old value. The re-render log will show the new value.
+                        console.log('[ChatApp] Gear icon: setShowConfig(true) called.');
+                    },
                         title: "Show Configuration"
                     }, "⚙️")
                 ),
@@ -509,117 +536,22 @@ function ChatApp() {
                         onChange: e => setInput(e.target.value),
                         disabled: loading,
                         placeholder: loading ? "Waiting for response..." : "Type your question here and press Enter",
-                        style: { marginRight: 10, width: 420, maxWidth: "90%" },
+                        style: { marginRight: 10, maxWidth: "none" }, // Rely on flexbox for width
                         ref: inputRef
                     }),
-                    React.createElement("button", { type: "submit", disabled: loading, style: { marginTop: 8 } }, loading ? "..." : "Send")
-                )
-            ),
-            React.createElement("div", { className: "llm-options-box" },
-                React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "Response Mode"),
-                React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
-                    React.createElement("input", {
-                        type: "radio",
-                        name: "llmMode",
-                        checked: llmMode === 'rag-only',
-                        onChange: () => setLlmMode('rag-only'),
-                        style: { marginRight: 4 }
-                    }),
-                    "RAG Only"
+                    React.createElement("button", { type: "submit", disabled: loading, style: { padding: '10px 15px'} }, loading ? "..." : "Send")
                 ),
-                React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
-                    React.createElement("input", {
-                        type: "radio",
-                        name: "llmMode",
-                        checked: llmMode === 'rag-with-fallback',
-                        onChange: () => setLlmMode('rag-with-fallback'),
-                        style: { marginRight: 4 }
-                    }),
-                    "RAG with LLM Fallback"
+                /* Progress bar moved here, above options */
+                (progress !== null && progress > 0) && React.createElement("div", { className: "progress-bar-container", style: { marginTop: '15px' } },
+                    React.createElement("div", {
+                        className: "progress-bar-fill",
+                        style: { width: `${progress}%` }
+                    })
                 ),
-                React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
-                    React.createElement("input", {
-                        type: "radio",
-                        name: "llmMode",
-                        checked: llmMode === 'raw-rag',
-                        onChange: () => setLlmMode('raw-rag'),
-                        style: { marginRight: 4 }
-                    }),
-                    "Raw RAG (Concatenated DB Results)"
-                ),
-                React.createElement("label", { style: { display: "block", fontSize: '0.85em' } },
-                    React.createElement("input", {
-                        type: "radio",
-                        name: "llmMode",
-                        checked: llmMode === 'pure-llm',
-                        onChange: () => setLlmMode('pure-llm'),
-                        style: { marginRight: 4 }
-                    }),
-                    "Pure LLM (No RAG)"
-                )
-            )
-        ),
-        // Always show progress meter at the bottom
-        React.createElement("div", { className: "progress-bar-container" },
-            React.createElement("div", {
-                className: "progress-bar-bg"
-            },
-                messages.length === 0
-                    ? React.createElement("div", { className: "placeholder" }, "Responses will appear here.")
-                    : messages.map((m, i) =>
-                        React.createElement("div", {
-                            key: i,
-                            className: "msg " + (
-                                m.system ? "system" : (m.sender === "user" ? "user" : "llm")
-                            )
-                        },
-                            m.system && m.text && m.text.startsWith("Prompt sent to LLM: ")
-                                ? React.createElement(ConstructedPromptMessage, { text: m.text })
-                                : m.system
-                                    ? React.createElement("span", { style: { fontStyle: "italic", background: "#f7f7f7", color: "#444", padding: "4px 8px", borderRadius: 4, display: "inline-block", marginBottom: 4 } }, m.text)
-                                    : m.sender === "user"
-                                        ? ["You: ", m.text]
-                                        : [
-                                            "AI: ",
-                                            m.spinner
-                                                ? React.createElement("span", { className: "spinner", style: { marginLeft: 4 }, "aria-label": "Loading..." },
-                                                    React.createElement("span", { className: "dot dot1" }),
-                                                    React.createElement("span", { className: "dot dot2" }),
-                                                    React.createElement("span", { className: "dot dot3" })
-                                                )
-                                                : null,
-                                            m.spinner ? " AI is thinking..." : m.text
-                                        ]
-                        )
-                    )
-            ),
-            showRetry && React.createElement("div", { style: { margin: "16px 0", textAlign: "center" } },
-                React.createElement("div", { style: { marginBottom: 8, color: "#b00", fontWeight: 500 } },
-                    "The connection was lost or interrupted before a complete response was received. You can retry to attempt to reconnect to this job."
-                ),
-                React.createElement("button", {
-                    onClick: handleRetry,
-                    style: { padding: "8px 20px", fontSize: "1.1em", borderRadius: 6, background: "#f2f2f2", border: "1px solid #bbb", cursor: "pointer" }
-                }, "Retry Connection")
-            ),
-            React.createElement("div", { style: { display: "flex", gap: 16, marginTop: 10 } },
-                React.createElement("div", { style: { flex: 3, display: "flex", flexDirection: "column" } },
-                    React.createElement("form", { onSubmit: sendMessage, className: "chat-form" },
-                        React.createElement("input", {
-                            type: "text",
-                            value: input,
-                            onChange: e => setInput(e.target.value),
-                            disabled: loading,
-                            placeholder: loading ? "Waiting for response..." : "Type your question here and press Enter",
-                            style: { marginRight: 10, width: 420, maxWidth: "90%" },
-                            ref: inputRef
-                        }),
-                        React.createElement("button", { type: "submit", disabled: loading, style: { marginTop: 8 } }, loading ? "..." : "Send")
-                    )
-                ),
-                React.createElement("div", { className: "llm-options-box" },
+                /* LLM Options Box moved here, below the form */
+                React.createElement("div", { className: "llm-options-box", style: { marginTop: '15px', width: 'fit-content', margin: '15px auto 0 auto' } }, // Centered and fit to content
                     React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "Response Mode"),
-                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.96em' } },
+                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
                         React.createElement("input", {
                             type: "radio",
                             name: "llmMode",
@@ -629,7 +561,7 @@ function ChatApp() {
                         }),
                         "RAG Only"
                     ),
-                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.96em' } },
+                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
                         React.createElement("input", {
                             type: "radio",
                             name: "llmMode",
@@ -639,7 +571,7 @@ function ChatApp() {
                         }),
                         "RAG with LLM Fallback"
                     ),
-                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.96em' } },
+                    React.createElement("label", { style: { display: "block", marginBottom: 6, fontSize: '0.85em' } },
                         React.createElement("input", {
                             type: "radio",
                             name: "llmMode",
@@ -649,7 +581,7 @@ function ChatApp() {
                         }),
                         "Raw RAG (Concatenated DB Results)"
                     ),
-                    React.createElement("label", { style: { display: "block", fontSize: '0.96em' } },
+                    React.createElement("label", { style: { display: "block", fontSize: '0.85em' } },
                         React.createElement("input", {
                             type: "radio",
                             name: "llmMode",
@@ -659,8 +591,12 @@ function ChatApp() {
                         }),
                         "Pure LLM (No RAG)"
                     )
-                )
-            )
+                ) // Closes llm-options-box
+            ) // Closes chat-container
+        ), // Closes main-content-row
+        // Always show status log at the bottom
+        React.createElement("div", { className: "status-container" },
+            React.createElement(StatusLogPanel, { statusLog: statusLog })
         )
     );
 
@@ -670,6 +606,12 @@ function ChatApp() {
 const style = document.createElement('style');
 
 // Mount the ChatApp to the DOM
+function mountChatApp() {
+    if (window.__raguiChatAppMounted) return;
+    window.__raguiChatAppMounted = true;
+    ReactDOM.createRoot(root).render(React.createElement(ChatApp));
+}
+
 (function ensureReactAndRender() {
     if (!window.React || !window.ReactDOM) {
         const reactScript = document.createElement('script');
@@ -677,14 +619,12 @@ const style = document.createElement('style');
         reactScript.onload = () => {
             const domScript = document.createElement('script');
             domScript.src = 'https://unpkg.com/react-dom@18/umd/react-dom.development.js';
-            domScript.onload = () => {
-                ReactDOM.createRoot(root).render(React.createElement(ChatApp));
-            };
+            domScript.onload = mountChatApp;
             document.body.appendChild(domScript);
         };
         document.body.appendChild(reactScript);
     } else {
-        ReactDOM.createRoot(root).render(React.createElement(ChatApp));
+        mountChatApp();
     }
 })();
 
@@ -718,7 +658,7 @@ style.textContent = `
         border-radius: 14px;
         box-shadow: 0 4px 24px rgba(60,80,180,0.07);
         margin: 30px auto;
-        max-width: 780px;
+        max-width: 1200px;
         padding: 0 0 20px 0;
         border: 1.5px solid #e2e6f0;
     }
@@ -925,18 +865,4 @@ style.textContent = `
 document.head.appendChild(style);
 
 // Load React from CDN if not present
-(function loadReact() {
-    if (!window.React || !window.ReactDOM) {
-        const reactScript = document.createElement('script');
-        reactScript.src = 'https://unpkg.com/react@18/umd/react.development.js';
-        reactScript.onload = () => {
-            const domScript = document.createElement('script');
-            domScript.src = 'https://unpkg.com/react-dom@18/umd/react-dom.development.js';
-            domScript.onload = () => ReactDOM.createRoot(root).render(React.createElement(ChatApp));
-            document.body.appendChild(domScript);
-        };
-        document.body.appendChild(reactScript);
-    } else {
-        ReactDOM.createRoot(root).render(React.createElement(ChatApp));
-    }
-})();
+

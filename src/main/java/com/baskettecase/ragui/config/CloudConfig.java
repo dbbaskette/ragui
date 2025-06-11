@@ -37,13 +37,12 @@ public class CloudConfig {
                         Object propertyValue = mapPropertySource.getProperty(propertyName);
                         logger.info("{} = {}", propertyName, propertyValue);
                         
-                        // Only extract the three specific properties for UI
+                        // Capture the DB plan and any model names from VCAP services.
                         if (propertyName.equals("vcap.services.embed-db.plan") ||
-                            propertyName.equals("vcap.services.embed-model.credentials.model_name") ||
-                            propertyName.equals("vcap.services.chat-model.credentials.model_name")) {
+                                (propertyName.startsWith("vcap.services.") && propertyName.endsWith(".credentials.model_name"))) {
                             String displayName = propertyName
-                                .replace("vcap.services.", "")
-                                .replace(".credentials", "");
+                                    .replace("vcap.services.", "")
+                                    .replace(".credentials", "");
                             importantProperties.put(displayName, propertyValue);
                         }
                     }
