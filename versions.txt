@@ -1,0 +1,7 @@
+Spring Boot 3.4.5
+Java 21
+Spring AI 1.0.0
+Spring Cloud Data Flow 2.11.5
+Spring Cloud 2024.0.1
+Maven
+

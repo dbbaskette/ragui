@@ -5,20 +5,21 @@ body {
     padding: 0;
 }
 .chat-container {
-    max-width: 700px;
-    margin: 40px auto;
+    width: 100%; /* Make it take full available width */
+    max-width: 1200px; /* USER REQUEST: Widen controls by 50% */
+    margin: 20px auto; /* Reduced top margin */
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 2px 18px #0001;
-    padding: 24px 18px 12px 18px;
+    padding: 20px; /* Uniform padding */
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 15px; /* Reduced gap */
 }
 
 .response-box {
-    min-height: 210px;
-    max-height: 420px;
+    min-height: 315px;
+    max-height: 630px;
     margin-bottom: 18px;
     background: #f4f7fa;
     border: 1.5px solid #e0e5f2;
@@ -56,7 +57,7 @@ body {
 }
 
 @media (max-width: 700px) {
-    .chat-container {
+    .main-content-row {
         flex-direction: column;
         gap: 0;
     }
@@ -66,19 +67,52 @@ body {
         width: 100% !important;
     }
 }
+
+.main-content-row {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 18px;
+    width: 100%;
+    justify-content: center;
+}
+
+.status-container {
+    width: 100%;
+    padding: 10px 0;
+    margin-top: 10px;
+    border-top: 1px solid #e0e5f2;
+}
+
+.progress-bar-container {
+    width: 100%;
+    background-color: #e0e0e0;
+    border-radius: 4px;
+    height: 10px;
+    margin-bottom: 10px; /* Space between progress bar and status log */
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background-color: #1a73e8;
+    border-radius: 4px;
+    transition: width 0.3s ease-in-out;
+    width: 0%; /* Start at 0% */
+}
+
 .chat-messages {
-    height: 340px;
-    min-height: 180px;
-    max-height: 340px;
+    height: 450px; /* Increased height */
+    min-height: 250px;
+    max-height: 600px; /* Increased max-height */
     overflow-y: auto;
     margin-bottom: 0;
     border: 1px solid #e5e7ef;
     border-radius: 10px;
-    background: #fafbfc;
-    padding: 14px 10px 10px 14px;
+    background: #fafbfc; /* This is the chat window background, ensure it's distinct from .chat-container if needed */
+    padding: 15px;
     box-shadow: 0 1px 8px #0001;
     flex: 3;
-    font-size: 1.09em;
+    font-size: 1.05em; /* Slightly reduced font size for more content */
     transition: border 0.2s;
 }
 
@@ -107,7 +141,9 @@ body {
     gap: 8px;
 }
 .chat-form input[type="text"] {
-    flex: 1;
+    flex-grow: 1; /* Allow input to grow */
+    flex-shrink: 1; /* Allow input to shrink if needed, default */
+    flex-basis: 0; /* Allow input to shrink below its content size if needed */
     padding: 10px;
     border-radius: 6px;
     border: 1px solid #ccc;
@@ -116,6 +152,7 @@ body {
     margin-bottom: 0;
 }
 .chat-form button {
+    flex-shrink: 0; /* Prevent button from shrinking */
     padding: 8px 16px;
     border-radius: 6px;
     border: none;
@@ -123,26 +160,53 @@ body {
     color: #fff;
     font-size: 1em;
     cursor: pointer;
-    margin-top: 8px;
+    /* margin-top: 8px; removed, handled by form gap or direct styling if needed */
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px; /* Add some space below the header */
+}
+
+.chat-header button.config-btn {
+    background: none;
+    border: none;
+    font-size: 1.5em;
+    cursor: pointer;
+    color: #555;
+    padding: 5px;
+    position: relative; /* Needed for z-index to take effect if it's not already positioned */
+    z-index: 100; /* High z-index to bring it to the front */
 }
 
 .llm-options-box {
-    flex: 1;
-    min-width: 180px;
-    max-width: 220px;
+    /* flex: 0 0 240px; Removed, now block display below form */
+    /* min-width: 200px; Removed */
+    /* max-width: 240px; Removed, will take full width from parent */
     background: #f6f7fb;
     border: 1px solid #d2d9ee;
     border-radius: 10px;
-    padding: 14px 12px 10px 12px;
-    margin-left: 8px;
-    align-self: flex-start;
+    padding: 15px;
+    /* margin-left: 20px; Removed */
+    /* align-self: center; Removed */
     box-shadow: 0 1px 8px #0001;
+    font-size: 0.9em; /* Base font size for the box */
+    /* width: 100%; /* Ensured by inline style in main.js, but can be here too */
+    margin-top: 15px; /* This was already applied inline in main.js, kept for consistency if inline is removed */
 }
 
 .llm-options-box label {
     display: block;
-    margin-bottom: 8px;
-    font-size: 0.98em;
+    margin-bottom: 6px; /* Reduced margin */
+    font-size: 0.9em; /* Slightly smaller font for radio labels, relative to box font-size */
+    color: #333;
+}
+
+.llm-options-box div[style*="font-weight: 600"] {
+    font-size: 1.1em; /* Make title 'Response Mode' a bit larger */
+    margin-bottom: 10px;
 }
 
 .llm-options-box input[type="radio"] {
