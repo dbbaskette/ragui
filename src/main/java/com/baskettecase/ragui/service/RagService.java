@@ -187,8 +187,9 @@ public class RagService {
 
                 if (contextText != null && !contextText.isEmpty()) {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to summarize context (stream)", 70);
-                    String llmSummaryPrompt = "Given the following context, answer the user's question as best as possible. Only use the provided context, do not invent new information.\nContext:\n" + contextText + "\n\nUser Question:\n" + request.getMessage();
-                    logger.debug("LLM Prompt (RAG Only Stream - Summarization): User: [{}]", llmSummaryPrompt.substring(0, Math.min(llmSummaryPrompt.length(), 250))); // Log truncated prompt
+                    String llmSummaryPrompt = "Given the following context, answer the user's question as best as possible. Only use the provided context, do not invent new information.\nContext:\n" + contextText + "\n\nUser Question:\n" + cleanedPrompt;
+                    logger.info("=== FULL LLM PROMPT (RAG ONLY STREAM) [first 500 chars] ===\n{}\n===============================", llmSummaryPrompt.substring(0, Math.min(500, llmSummaryPrompt.length())));
+                    logger.trace("LLM Prompt (RAG Only - Summarization Stream): User: [{}]", llmSummaryPrompt);
                     logger.info("[{}] LLM (RAG Only Stream) call started", Instant.now());
 
                     chatClient.prompt()
@@ -205,13 +206,15 @@ public class RagService {
                         })
                         .doOnComplete(() -> {
                             logger.info("[{}] LLM (RAG Only Stream) call finished", Instant.now());
-                            if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
+                            if (statusListener != null) statusListener.onStatus("COMPLETED", 100);
                         })
                         .subscribe();
                 } else {
-                    logger.info("No relevant context found for RAG Only stream. Message: {}", request.getMessage());
+                    // No context found, send a message and complete the stream
+                    logger.info("No context found for RAG Only stream. Completing.");
+                    if (statusListener != null) statusListener.onStatus("No context found, stream complete", 90);
                     chunkConsumer.accept("No relevant context was found to answer your question.\n\nSource: 0 (no context)");
-                    if (statusListener != null) statusListener.onStatus("No context found, stream complete", 100);
+                    if (statusListener != null) statusListener.onStatus("COMPLETED", 100);
                 }
             }
         } catch (Exception e) {
