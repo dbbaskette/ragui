@@ -37,7 +37,7 @@ public class JobController {
             try {
                 RagService.RagStatusListener ragStatusListener = (statusMsg, progressVal) -> {
                     boolean isError = statusMsg.startsWith("LLM stream error:") || statusMsg.startsWith("Stream processing error:") || statusMsg.startsWith("Error during streaming:");
-                    boolean isComplete = "LLM stream complete".equals(statusMsg) && progressVal == 100;
+                    boolean isComplete = ("LLM stream complete".equals(statusMsg) || "COMPLETED".equals(statusMsg)) && progressVal == 100;
 
                     if (isComplete) {
                         job.setStatus(Job.Status.COMPLETED);
