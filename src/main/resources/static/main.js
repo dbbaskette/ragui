@@ -120,27 +120,15 @@ function ChatApp() {
             })
         )
     );
-    // SSE subscription for backend status updates
+    // SSE subscription using fetch for raw stream access
     React.useEffect(() => {
         if (!jobId) return;
-        setLoading(true);
-        // Track if job is done for this effect (prevents post-completion error/timeout handling)
-        let jobReallyDone = false;
-        setStatusLog([]);
-        // Only remove spinner/progress messages, keep user prompt
-        // Do not remove spinner/progress messages here; only remove after completion.
-        // setMessages(msgs => msgs.filter(m => !m.spinner));
-        setShowRetry(false);
-        let didComplete = false;
-        let didFail = false;
-        const didCompleteRef = { current: false };
-        const didFailRef = { current: false };
-        let sseClosed = false;
-        let timeoutId = setTimeout(() => {
-            if (jobReallyDone || window.__raguiJobReallyComplete || didCompleteRef.current || didFailRef.current) {
-                console.log("[SSE] Timeout fired, but already complete/failed; ignoring.");
-                return;
-            }
+
+        const controller = new AbortController();
+        const signal = controller.signal;
+
+        const timeoutId = setTimeout(() => {
+            console.log("[Fetch SSE] Timeout fired (frontend)");
             setStatusLog(log => [...log, "Timed out waiting for response from backend."]);
             setMessages(msgs => [
                 ...msgs.filter(m => !m.spinner),
@@ -148,247 +136,105 @@ function ChatApp() {
             ]);
             setLoading(false);
             setShowRetry(true);
-            console.log("[SSE] Timeout fired (frontend)");
-        }, 185000); // 185 seconds (3 min 5 sec)
-        // Defensive: Prevent SSE connection if job is already marked complete
-        if (window.__raguiJobReallyComplete && window.__raguiJobLastJobId === jobId) {
-            console.warn(`[SSE] Prevented SSE connection for already completed jobId ${jobId}`);
-            setLoading(false);
-            setShowRetry(false);
-            setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-            return;
-        }
-        window.__raguiJobLastJobId = jobId;
-        const es = new EventSource(`/api/events/${jobId}`);
-        console.log("[SSE] Connection opened for jobId", jobId);
-        es.onopen = () => {
-            console.log("[SSE] onopen");
-        };
-        es.onmessage = (event) => {
-            console.log("[SSE] onmessage", event.data);
-            try {
-                const data = JSON.parse(event.data);
-                // Prefer statusMessage if present, else fallback to status
-                if (data.statusMessage || data.status_message) {
-                    setStatusLog(log => {
-                        const msg = data.statusMessage || data.status_message;
-                        if (log.length === 0 || log[log.length - 1] !== msg) {
-                            return [...log, msg];
-                        }
-                        return log;
-                    });
-                    setCurrentStatus(data.statusMessage || data.status_message);
-                    // Remove: do NOT show backend status messages as system messages in chat (except spinner/progress)
-                    // Only show 'AI is thinking...' spinner if loading
-                    // (No action needed here; status messages will only appear in the status log panel)
-                    // Defensive: Mark job as done if status indicates completion
-                    if (data.status === 'COMPLETED' || data.status === 'FAILED') {
-                        window.__raguiJobReallyComplete = true;
-                        if (typeof es !== 'undefined') es.close();
-                        setLoading(false); // Ensure loading is false
-                        setProgress(100);
-                        setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-                        return;
-                    }
-                } else if (typeof data.message === "string" && data.message.trim() !== "") {
-                    // Handle plain LLM message event (final answer)
-                    if (!aiAnswerReceivedRef.current) { // Prevent duplicate answer
-                        setMessages(msgs => {
-                            const lastMsg = msgs[msgs.length - 1];
-                            if (!lastMsg || lastMsg.text !== data.message) {
-                                const updated = [...msgs.filter(m => !m.spinner), { sender: "llm", text: data.message, spinner: false }];
-                                console.log("After AI message (plain message):", updated);
-                                return updated;
-                            }
-                            return msgs;
-                        });
-                        aiAnswerReceivedRef.current = true;
-                        jobReallyDone = true;
-                        window.__raguiJobReallyComplete = true;
-                        setLoading(false);
-                        setShowRetry(false);
-                        setCurrentStatus('COMPLETED');
-                        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; } // Moved up
-                        setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-                    }
-                } else if (data.status) {
-                    setStatusLog(log => {
-                        if (log.length === 0 || log[log.length - 1] !== data.status) {
-                            return [...log, data.status];
-                        }
-                        return log;
-                    });
-                    setCurrentStatus(data.status);
-                }
-                if (typeof data.progress === "number") {
-                    setProgress(data.progress);
-                }
-                // Show constructed prompt as a system message if present
-                if (data.response && data.response.prompt) {
-                    setMessages(msgs => [
-                        ...msgs,
-                        { sender: "system", text: "Prompt sent to LLM: " + data.response.prompt, system: true }
-                    ]);
-                    setLastPrompt(data.response.prompt);
-                }
-                if (data.prompt) {
-                    setMessages(msgs => [
-                        ...msgs,
-                        { sender: "system", text: "Prompt sent to LLM: " + data.prompt, system: true }
-                    ]);
-                    setLastPrompt(data.prompt);
-                }
-                // Show AI response if present (either as 'message' or as 'response.answer')
-                if (data.message) {
-                    // Only add if not already received (dedupe)
-                    if (!aiAnswerReceivedRef.current) {
-                        setMessages(msgs => {
-                            const lastMsg = msgs[msgs.length - 1];
-                            if (!lastMsg || lastMsg.text !== data.message) {
-                                const updated = [...msgs.filter(m => !m.spinner), { sender: data.sender || "llm", text: data.message, spinner: false }];
-                                console.log("After AI message (message):", updated);
-                                return updated;
-                            }
-                            return msgs;
-                        });
-                        aiAnswerReceivedRef.current = true;
-                        jobReallyDone = true;
-                        window.__raguiJobReallyComplete = true;
-                        setLoading(false);
-                        setShowRetry(false);
-                        setCurrentStatus('COMPLETED');
-                        setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-                        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-                    }
-                } else if (data.response && (data.response.answer || data.response.text)) {
-                    aiAnswerReceivedRef.current = true;
-                    jobReallyDone = true;
-                    window.__raguiJobReallyComplete = true;
-                    setMessages(msgs => {
-                        const answer = data.response.answer || data.response.text;
-                        const updated = [...msgs.filter(m => !m.spinner), { sender: "llm", text: answer, spinner: false }];
-                        console.log("After AI message (response):", updated);
-                        return updated;
-                    });
-                    setLoading(false); // Ensure loading is false
-                    // Defensive: clear timeout as soon as a final answer is rendered
-                    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0); // Focus after state updates
-                }
-                if (data.complete || data.failed || data.status === "COMPLETE" || data.status === "COMPLETED" || data.status === "FAILED") {
-                    // Set completion flags FIRST
-                    didComplete = true;
-                    didCompleteRef.current = true;
-                    if (data.status === "FAILED") {
-                        didFail = true;
-                        didFailRef.current = true;
-                    }
-                    if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-                    setLoading(false);
-                    setShowRetry(false); // Remove retry UI
-                    setCurrentStatus(data.status === "FAILED" ? "FAILED" : "COMPLETED");
-                    // Remove spinner/progress and any retry/timeout/interruption error messages from chat
-                    setMessages(msgs =>
-                        msgs.filter(
-                            m =>
-                                !m.spinner &&
-                                m.text !== "AI response interrupted or connection lost before completion." &&
-                                m.text !== "Timed out waiting for response from backend."
-                        )
-                    );
-                    // Mark job as really done for this effect
-                    jobReallyDone = true;
-                    window.__raguiJobReallyComplete = true;
-                    // Immediately clear closeCheck so no interruption message can be shown after completion
-                    if (typeof closeCheck !== 'undefined') clearInterval(closeCheck);
-                    // Immediately close the SSE connection and mark as closed
-                    es.close();
-                    sseClosed = true;
-                    // setLoading(false) already called
-                    setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-                    return;
-                }
-            } catch (err) {
-                // --- STREAMING LLM RESPONSE HANDLING ---
-                // If JSON.parse fails, assume it's a streaming text chunk.
-                aiAnswerReceivedRef.current = true; // Mark answer as received to prevent duplicates
-                const chunk = event.data;
-                setMessages(msgs => {
-                    let updated = [...msgs];
-                    // Find the last message, which should be the 'AI is thinking...' or streaming bubble
-                    if (updated.length > 0 && updated[updated.length - 1].sender === 'llm' && (updated[updated.length - 1].spinner || updated[updated.length - 1].streaming)) {
-                        let last = updated[updated.length - 1];
-                        // If it's the first chunk (spinner is true), replace text. Otherwise, append.
-                        const newText = last.spinner ? chunk : (last.text || "") + chunk;
-                        updated[updated.length - 1] = {
-                            ...last,
-                            text: newText,
-                            spinner: false, // Ensure spinner is off
-                            streaming: true // Mark as streaming
-                        };
-                    } else {
-                        // Fallback: if no spinner message, start a new streaming message.
-                        updated.push({ sender: 'llm', text: chunk, spinner: false, streaming: true });
-                    }
-                    return updated;
-                });
-            }
-        };
-        es.onerror = () => {
-            if (jobReallyDone || window.__raguiJobReallyComplete) return;
-            if (didCompleteRef.current || didFailRef.current) {
-                // Ignore errors and do not show connection lost/interruption messages after job is done
-                return;
-            }
-            if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-            setStatusLog(log => [...log, "SSE connection lost."]);
-            // Only show interruption message and retry UI if job did NOT complete
-            if (!didCompleteRef.current && !didFailRef.current && !window.__raguiJobReallyComplete) {
-                setMessages(msgs => {
-                    // Only show interruption message if NO AI answer was ever received for this job
-                    const filtered = msgs.filter(m => !m.spinner);
-                    if (!aiAnswerReceivedRef.current) {
-                        return [
-                            ...filtered,
-                            { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
-                        ];
-                    } else {
-                        return filtered;
-                    }
-                });
-                setLoading(false);
-                setShowRetry(true);
-            }
-            if (!didCompleteRef.current && !didFailRef.current && !window.__raguiJobReallyComplete) {
-                sseClosed = true;
-            }
-            es.close();
-        };
+            controller.abort(); // Abort the fetch on timeout
+        }, 185000); // 185 seconds
 
-        let closeCheck = setInterval(() => {
-            if (jobReallyDone || window.__raguiJobReallyComplete) {
-                clearInterval(closeCheck);
-                return;
+        async function processStream() {
+            setLoading(true);
+            setStatusLog([]);
+            setShowRetry(false);
+            aiAnswerReceivedRef.current = false;
+
+            try {
+                const response = await fetch(`/api/events/${jobId}`, { signal });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        console.log("[Fetch SSE] Stream finished.");
+                        break;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep potential partial line in buffer
+
+                    for (const line of lines) {
+                        if (line.trim() === '') continue; // Ignore empty lines
+
+                        // We now display the raw line, but still need to check if it's a control message
+                        const payload = line.startsWith('data:') ? line.substring(5).trim() : line;
+
+                        try {
+                            const data = JSON.parse(payload);
+                            // --- JSON: This is a status/control message, handle it silently ---
+                            if (data.statusMessage) {
+                                setStatusLog(log => (log.length === 0 || log[log.length - 1] !== data.statusMessage) ? [...log, data.statusMessage] : log);
+                            }
+                            if (typeof data.progress === "number") {
+                                setProgress(data.progress);
+                            }
+                            if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+                                console.log(`[Fetch SSE] Received terminal status: ${data.status}`);
+                                if (timeoutId) clearTimeout(timeoutId);
+                                setLoading(false);
+                                setProgress(100);
+                                setMessages(msgs => msgs.map(m => m.streaming ? { ...m, streaming: false } : m));
+                                setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
+                                // Stream will close, causing the loop to break.
+                            }
+                        } catch (e) {
+                            // --- PLAIN TEXT: This is an LLM chunk ---
+                            // Strip "data:" prefix but preserve all subsequent characters (including spaces)
+                            const chunkToDisplay = line.startsWith('data:') ? line.substring(5) : line;
+
+                            if (!aiAnswerReceivedRef.current) {
+                                // First chunk: replace the 'thinking' spinner
+                                aiAnswerReceivedRef.current = true;
+                                setMessages(msgs => {
+                                    const updated = msgs.filter(m => !m.spinner);
+                                    updated.push({ sender: 'llm', text: chunkToDisplay, spinner: false, streaming: true, className: 'llm-message' });
+                                    return updated;
+                                });
+                            } else {
+                                // Subsequent chunks: append to the existing streaming message
+                                setMessages(msgs => {
+                                    const updated = [...msgs];
+                                    if (updated.length > 0 && updated[updated.length - 1].streaming) {
+                                        const last = updated[updated.length - 1];
+                                        updated[updated.length - 1] = { ...last, text: (last.text || "") + chunkToDisplay };
+                                    }
+                                    return updated;
+                                });
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    console.error('[Fetch SSE] Connection error:', error);
+                    if (timeoutId) clearTimeout(timeoutId);
+                    setStatusLog(log => [...log, "SSE connection failed."]);
+                    setMessages(msgs => {
+                        const filtered = msgs.filter(m => !m.spinner);
+                        return !aiAnswerReceivedRef.current ? [...filtered, { sender: "llm", text: "AI response connection failed.", spinner: false }] : filtered;
+                    });
+                    setLoading(false);
+                    setShowRetry(true);
+                }
             }
-            if (didCompleteRef.current || didFailRef.current) {
-                clearInterval(closeCheck);
-                return;
-            }
-            if (sseClosed && !didCompleteRef.current && !didFailRef.current && !window.__raguiJobReallyComplete) {
-                setStatusLog(log => [...log, "AI response interrupted or connection lost before completion."]);
-                setMessages(msgs => [
-                    ...msgs.filter(m => !m.spinner),
-                    { sender: "llm", text: "AI response interrupted or connection lost before completion.", spinner: false }
-                ]);
-                setLoading(false);
-                setShowRetry(true);
-                clearInterval(closeCheck);
-            }
-        }, 1000);
+        }
+
+        processStream();
+
         return () => {
-            if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
-            clearInterval(closeCheck);
-            es.close();
+            if (timeoutId) clearTimeout(timeoutId);
+            controller.abort();
         };
     }, [jobId, retryKey]);
 

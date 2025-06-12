@@ -15,6 +15,6 @@ applications:
     JAVA_OPTS: '-Xmx1024m -Xss512k -XX:ReservedCodeCacheSize=512M -XX:MaxMetaspaceSize=512M'
   services:
     - embed-db
-    # - chat-model
-    - chat-mistral-vision
+    - chat-model
+    #- chat-mistral-vision
     - embed-model
