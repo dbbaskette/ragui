@@ -302,11 +302,25 @@ function ChatApp() {
                 throw new Error(`Backend error: ${response.status} ${errorText}`);
             }
             const data = await response.json();
-            if (!data.jobId) {
-                throw new Error("No jobId received from backend.");
+
+            if (llmMode === "raw-rag") {
+                // Raw RAG mode: response is the final answer, not a jobId
+                setMessages(msgs => [
+                    ...msgs.filter(m => !m.spinner), // Remove 'AI is thinking...'
+                    { sender: "llm", text: data.answer, spinner: false }
+                ]);
+                setLoading(false);
+                setInput("");
+                setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
+                // No jobId to set, so we return here for Raw RAG.
+            } else {
+                // Streaming modes: expect a jobId
+                if (!data.jobId) {
+                    throw new Error("No jobId received from backend for streaming mode.");
+                }
+                setJobId(data.jobId); // Triggers SSE useEffect to handle status/progress
+                setInput(""); // Clear input only after successful job submission
             }
-            setJobId(data.jobId); // Triggers SSE useEffect to handle status/progress
-            setInput(""); // Clear input only after successful job submission
         } catch (error) {
             console.error("Failed to send message or create job:", error);
             setMessages(msgs => [

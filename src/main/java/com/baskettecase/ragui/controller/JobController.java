@@ -1,11 +1,13 @@
 package com.baskettecase.ragui.controller;
 
 import com.baskettecase.ragui.dto.ChatRequest;
+import com.baskettecase.ragui.dto.ChatResponse;
 import com.baskettecase.ragui.model.Job;
 import com.baskettecase.ragui.service.JobService;
 import com.baskettecase.ragui.service.RagService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -23,8 +25,23 @@ public class JobController {
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     @PostMapping("/job")
-    public JobIdResponse submitJob(@RequestBody ChatRequest request) {
+    public ResponseEntity<?> submitJob(@RequestBody ChatRequest request) {
         org.slf4j.LoggerFactory.getLogger(JobController.class).debug("/api/job received: {}", request);
+
+        if (request.isRawRag()) {
+            // Handle Raw RAG synchronously
+            org.slf4j.LoggerFactory.getLogger(JobController.class).debug("Processing Raw RAG request synchronously.");
+            try {
+                ChatResponse chatResponse = ragService.chatRaw(request); // Changed to chatRaw for non-streaming Raw RAG
+                return ResponseEntity.ok(chatResponse);
+            } catch (Exception e) {
+                org.slf4j.LoggerFactory.getLogger(JobController.class).error("Error processing Raw RAG request: {}", e.getMessage(), e);
+                // Return a generic error response, or rethrow as appropriate
+                return ResponseEntity.status(500).body(new ChatResponse("Error processing Raw RAG request: " + e.getMessage(), "ERROR"));
+            }
+        }
+
+        // For streaming modes, proceed with async job creation
         Job job = jobService.createJob();
         // job.setStatus(Job.Status.QUEUED); // Status is set by Job constructor with an event
         // Async process
@@ -85,7 +102,7 @@ public class JobController {
             // jobService.updateJob(job); // Status updates and chunk additions are handled within Job methods using thread-safe collections.
                                         // Final job state (COMPLETED/FAILED) is set by the listener.
         });
-        return new JobIdResponse(job.getJobId());
+        return ResponseEntity.ok(new JobIdResponse(job.getJobId()));
     }
 
     @GetMapping(value = "/events/{jobId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
