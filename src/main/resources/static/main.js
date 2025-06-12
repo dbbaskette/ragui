@@ -309,8 +309,29 @@ function ChatApp() {
                     return;
                 }
             } catch (err) {
-                setStatusLog(log => [...log, "Malformed SSE message: " + event.data]);
-                console.log("[SSE] Malformed SSE message", event.data);
+                // --- STREAMING LLM RESPONSE HANDLING ---
+                // If JSON.parse fails, assume it's a streaming text chunk.
+                aiAnswerReceivedRef.current = true; // Mark answer as received to prevent duplicates
+                const chunk = event.data;
+                setMessages(msgs => {
+                    let updated = [...msgs];
+                    // Find the last message, which should be the 'AI is thinking...' or streaming bubble
+                    if (updated.length > 0 && updated[updated.length - 1].sender === 'llm' && (updated[updated.length - 1].spinner || updated[updated.length - 1].streaming)) {
+                        let last = updated[updated.length - 1];
+                        // If it's the first chunk (spinner is true), replace text. Otherwise, append.
+                        const newText = last.spinner ? chunk : (last.text || "") + chunk;
+                        updated[updated.length - 1] = {
+                            ...last,
+                            text: newText,
+                            spinner: false, // Ensure spinner is off
+                            streaming: true // Mark as streaming
+                        };
+                    } else {
+                        // Fallback: if no spinner message, start a new streaming message.
+                        updated.push({ sender: 'llm', text: chunk, spinner: false, streaming: true });
+                    }
+                    return updated;
+                });
             }
         };
         es.onerror = () => {
@@ -496,27 +517,24 @@ function ChatApp() {
                         : messages.map((m, i) =>
                             React.createElement("div", {
                                 key: i,
-                                className: "msg " + (
-                                    m.system ? "system" : (m.sender === "user" ? "user" : "llm")
-                                )
+                                className: m.system ? "msg system" : m.sender === "user" ? "message-bubble user" : m.spinner ? "message-bubble llm spinner" : "message-bubble llm"
                             },
                                 m.system && m.text && m.text.startsWith("Prompt sent to LLM: ")
                                     ? React.createElement(ConstructedPromptMessage, { text: m.text })
                                     : m.system
                                         ? React.createElement("span", { style: { fontStyle: "italic", background: "#f7f7f7", color: "#444", padding: "4px 8px", borderRadius: 4, display: "inline-block", marginBottom: 4 } }, m.text)
                                         : m.sender === "user"
-                                            ? ["You: ", m.text]
-                                            : [
-                                                "AI: ",
-                                                m.spinner
-                                                    ? React.createElement("span", { className: "spinner", style: { marginLeft: 4 }, "aria-label": "Loading..." },
+                                            ? m.text
+                                            : m.spinner
+                                                ? React.createElement(React.Fragment, null,
+                                                    React.createElement("span", { className: "spinner", style: { marginRight: '8px' } },
                                                         React.createElement("span", { className: "dot dot1" }),
                                                         React.createElement("span", { className: "dot dot2" }),
                                                         React.createElement("span", { className: "dot dot3" })
-                                                    )
-                                                    : null,
-                                                m.spinner ? " AI is thinking..." : m.text
-                                            ]
+                                                    ),
+                                                    "AI is thinking..."
+                                                  )
+                                                : m.text
                                 )
                         )
                 ),
@@ -860,6 +878,29 @@ style.textContent = `
         color: #253f5d;
         padding-bottom: 1px;
         word-break: break-word;
+    }
+    .message-bubble {
+        padding: 10px 15px;
+        border-radius: 18px;
+        margin-bottom: 8px;
+        max-width: 80%;
+        word-wrap: break-word;
+        white-space: pre-wrap; /* Preserve spaces and wrap text */
+    }
+    .message-bubble.user {
+        background-color: #007AFF; /* iMessage Blue */
+        color: white;
+        align-self: flex-end;
+    }
+    .message-bubble.llm {
+        background-color: #34C759; /* SMS Green */
+        color: white;
+        align-self: flex-start;
+    }
+    .message-bubble.llm.spinner {
+        background-color: #E5E5EA; /* iMessage Gray */
+        color: #1c1c1e;
+        align-self: flex-start;
     }
 `;
 document.head.appendChild(style);
