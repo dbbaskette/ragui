@@ -117,9 +117,28 @@ fi
 
 if [[ "$1" == "--test" ]]; then
   echo -e "\033[1;33mTEST mode: will build, push to CF, and print route summary.\033[0m"
-  if cf app "$app_name" &> /dev/null; then
-    echo -e "\033[1;33mDeleting existing app $app_name...\033[0m"
-    cf delete "$app_name" -f
+  # Save original manifest
+  cp manifest.yml manifest.yml.bak_branch
+  # Detect original app name (first name: field)
+  orig_app_name=$(grep 'name:' manifest.yml.bak_branch | head -1 | sed 's/.*name:[[:space:]]*//' | tr -d '\r\n')
+  echo "[DEBUG] Detected original app name: '$orig_app_name'"
+  # Compose new app name by appending -test
+  test_app_name="${orig_app_name}-test"
+  # Update manifest.yml with new name
+  # Find the line number of the name field
+  # Search for the line containing the app name, allowing for variations in YAML structure.
+  name_lineno=$(grep -n -m1 "^[[:space:]]*-*[[:space:]]*name:[[:space:]]*$orig_app_name" manifest.yml | cut -d: -f1)
+  if [[ -n "$name_lineno" ]]; then
+    echo "[DEBUG] Replacing app name on line $name_lineno: $orig_app_name -> $test_app_name"
+    sed -i.bak "${name_lineno}s/$orig_app_name/$test_app_name/" manifest.yml && rm manifest.yml.bak
+  else
+    echo "[ERROR] Could not find app name '$orig_app_name' in manifest.yml"
+    exit 1
+  fi
+  # Update JAR path as before
+  if cf app "$test_app_name" &> /dev/null; then
+    echo -e "\033[1;33mDeleting existing app $test_app_name...\033[0m"
+    cf delete "$test_app_name" -f
   fi
   echo "Building JAR with mvn clean package..."
   mvn clean package
@@ -127,9 +146,11 @@ if [[ "$1" == "--test" ]]; then
   sed -i.bak "s|path: .*|path: target/${main_artifact_id}-${current_version}.jar|" manifest.yml && rm manifest.yml.bak
   echo "Pushing to Cloud Foundry..."
   cf push
+  # Restore original manifest
+  mv manifest.yml.bak_branch manifest.yml
   echo "Test build and push complete."
   echo -e "\n\033[1;35m==================== DEPLOYED APP ROUTE(S) ====================\033[0m"
-  cf app "$app_name" | grep -i 'routes:' -A 1 | sed 's/^/    /'
+  cf app "$test_app_name" | grep -i 'routes:' -A 1 | sed 's/^/    /'
   echo -e "\033[1;32m\nApp Route(s) above. Open in your browser to test the deployment.\033[0m"
   echo -e "\033[1;35m==============================================================\033[0m\n"
   exit 0

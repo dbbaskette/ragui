@@ -32,6 +32,20 @@ public class Job {
     private final List<StatusEvent> eventBuffer = new CopyOnWriteArrayList<>();
     private volatile long eventSeq = 0;
 
+    // FIFO event buffer for stream chunks
+    public static class StreamChunkEvent {
+        public final long seq;
+        public final String chunk;
+        public final long timestamp;
+        public StreamChunkEvent(long seq, String chunk, long timestamp) {
+            this.seq = seq;
+            this.chunk = chunk;
+            this.timestamp = timestamp;
+        }
+    }
+    private final List<StreamChunkEvent> chunkBuffer = new CopyOnWriteArrayList<>();
+    private volatile long chunkEventSeq = 0;
+
     public void addStatusEvent(String status, String statusMessage, int progress) {
         eventBuffer.add(new StatusEvent(++eventSeq, status, statusMessage, progress, System.currentTimeMillis()));
     }
@@ -40,6 +54,16 @@ public class Job {
     }
     public List<StatusEvent> getEventsSince(long lastSeq) {
         return eventBuffer.stream().filter(e -> e.seq > lastSeq).toList();
+    }
+
+    public void addStreamChunk(String chunk) {
+        chunkBuffer.add(new StreamChunkEvent(++chunkEventSeq, chunk, System.currentTimeMillis()));
+    }
+    public List<StreamChunkEvent> getAllChunkEvents() {
+        return chunkBuffer;
+    }
+    public List<StreamChunkEvent> getChunkEventsSince(long lastChunkSeq) {
+        return chunkBuffer.stream().filter(c -> c.seq > lastChunkSeq).toList();
     }
 
     public Job(String jobId) {
