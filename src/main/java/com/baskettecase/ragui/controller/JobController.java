@@ -37,7 +37,11 @@ public class JobController {
             } catch (Exception e) {
                 org.slf4j.LoggerFactory.getLogger(JobController.class).error("Error processing Raw RAG request: {}", e.getMessage(), e);
                 // Return a generic error response, or rethrow as appropriate
-                return ResponseEntity.status(500).body(new ChatResponse("Error processing Raw RAG request: " + e.getMessage(), "ERROR"));
+                ChatResponse errorResponse = new ChatResponse.Builder()
+                    .answer("Error processing Raw RAG request: " + e.getMessage())
+                    .source("ERROR")
+                    .build();
+                return ResponseEntity.status(500).body(errorResponse);
             }
         }
 
