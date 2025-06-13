@@ -1,6 +1,10 @@
 #!/bin/bash
-# release.sh - Increment version in pom.xml, commit, push, and tag release
-# Usage: ./release.sh [--test]
+# release.sh - Manage releases with optional version control
+# Usage: 
+#   ./release.sh         # Normal release (bumps version)
+#   ./release.sh --keep  # Release without version bump
+#   ./release.sh --test  # Test release (appends -test to app name)
+#   ./release.sh --local # Run locally for development
 
 set -e
 
@@ -49,8 +53,8 @@ echo "Main artifactId: $main_artifact_id"
 echo "Current version: $current_version"
 
 
-# 3. Increment patch version (x.y.z -> x.y.$((z+1)))
-if [[ "$1" != "--test" && "$1" != "--local" ]]; then
+# 3. Handle version bumping (unless --keep or --test or --local is used)
+if [[ "$1" != "--test" && "$1" != "--local" && "$1" != "--keep" ]]; then
   IFS='.' read -r major minor patch <<< "$current_version"
   if [[ -z "$patch" ]]; then
     echo "Could not parse version from pom.xml"
@@ -67,8 +71,8 @@ if [[ "$1" != "--test" && "$1" != "--local" ]]; then
   fi
 fi
 
-# 4. Update only the correct <version> tag in pom.xml (the one after <artifactId>ragui</artifactId>)
-if [[ "$1" != "--test" && "$1" != "--local" ]]; then
+# 4. Update version in pom.xml if not in test/keep/local mode
+if [[ "$1" != "--test" && "$1" != "--local" && "$1" != "--keep" ]]; then
   awk -v aid="$main_artifact_id" -v newver="$new_version" '
     BEGIN {found=0}
     /<artifactId>/ && $0 ~ aid {
@@ -82,7 +86,11 @@ if [[ "$1" != "--test" && "$1" != "--local" ]]; then
     }
     {print}
   ' pom.xml > pom.xml.tmp && mv pom.xml.tmp pom.xml
-  echo "pom.xml updated."
+  echo "pom.xml updated with new version $new_version."
+else
+  # In --keep mode, use current version as new_version
+  new_version="$current_version"
+  echo "Using existing version $new_version (--keep mode)"
 
   # --- Sync MAIN_JS_VERSION in main.js with new_version ---
   JS_SRC="src/main/resources/static/main.js"
