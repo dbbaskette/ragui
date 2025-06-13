@@ -122,8 +122,12 @@ if [[ "$1" == "--test" ]]; then
   # Detect original app name (first name: field)
   orig_app_name=$(grep 'name:' manifest.yml.bak_branch | head -1 | sed 's/.*name:[[:space:]]*//' | tr -d '\r\n')
   echo "[DEBUG] Detected original app name: '$orig_app_name'"
-  # Compose new app name by appending -test
-  test_app_name="${orig_app_name}-test"
+  # Only append -test if not already present
+  if [[ "$orig_app_name" == *-test ]]; then
+    test_app_name="$orig_app_name"
+  else
+    test_app_name="${orig_app_name}-test"
+  fi
   # Update manifest.yml with new name
   # Find the line number of the name field
   # Search for the line containing the app name, allowing for variations in YAML structure.
