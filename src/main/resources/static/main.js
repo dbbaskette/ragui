@@ -1,4 +1,4 @@
-const MAIN_JS_VERSION = "0.3.10";
+const MAIN_JS_VERSION = "0.3.11";
 const root = document.getElementById('root');
 
 // Expand/collapse for constructed prompt system messages
@@ -305,14 +305,25 @@ function ChatApp() {
 
             if (llmMode === "raw-rag") {
                 // Raw RAG mode: response is the final answer, not a jobId
-                setMessages(msgs => [
-                    ...msgs.filter(m => !m.spinner), // Remove 'AI is thinking...'
-                    { sender: "llm", text: data.answer, spinner: false }
-                ]);
+                console.log("Raw RAG response data:", data);
+                aiAnswerReceivedRef.current = true; // Mark that we have a response
+                setMessages(msgs => {
+                    const updated = msgs.filter(m => !m.spinner);
+                    if (data.bubbles && Array.isArray(data.bubbles)) {
+                        const newBubbles = data.bubbles.map(bubbleText => ({
+                            sender: 'llm',
+                            text: bubbleText,
+                            spinner: false
+                        }));
+                        return [...updated, ...newBubbles];
+                    } else {
+                        // Fallback for single answer or error
+                        updated.push({ sender: 'llm', text: data.answer, spinner: false });
+                        return updated;
+                    }
+                });
                 setLoading(false);
-                setInput("");
-                setTimeout(() => { if (inputRef.current) inputRef.current.focus(); }, 0);
-                // No jobId to set, so we return here for Raw RAG.
+                setInput(""); // Clear input on successful submission
             } else {
                 // Streaming modes: expect a jobId
                 if (!data.jobId) {
@@ -394,7 +405,7 @@ function ChatApp() {
                                                     ),
                                                     "AI is thinking..."
                                                   )
-                                                : m.text
+                                                : (m.text ? React.createElement('div', { dangerouslySetInnerHTML: { __html: m.text } }) : null)
                                 )
                         )
                 ),
@@ -578,8 +589,7 @@ style.textContent = `
     .response-box {
         background: #f0f4fa;
         border-radius: 8px;
-        min-height: 170px;
-        max-height: 320px;
+        height: 460px;
         overflow-y: auto;
         margin: 18px 0 10px 0;
         padding: 16px 18px;
@@ -606,7 +616,7 @@ style.textContent = `
         color: #222;
         border-radius: 6px;
         padding: 10px;
-        font-size: 1.08em;
+        font-size: 1em;
         margin-bottom: 0;
         outline: none;
         transition: border 0.2s;
@@ -620,7 +630,7 @@ style.textContent = `
         border: none;
         border-radius: 6px;
         padding: 10px 20px;
-        font-size: 1.08em;
+        font-size: 1em;
         font-weight: 600;
         cursor: pointer;
         margin-top: 8px;
@@ -746,6 +756,7 @@ style.textContent = `
         max-width: 80%;
         word-wrap: break-word;
         white-space: pre-wrap; /* Preserve spaces and wrap text */
+        font-size: 0.8em;
     }
     .message-bubble.user {
         background-color: #007AFF; /* iMessage Blue */

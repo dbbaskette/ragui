@@ -2,9 +2,9 @@ package com.baskettecase.ragui.service;
 
 import com.baskettecase.ragui.dto.ChatRequest;
 import com.baskettecase.ragui.dto.ChatResponse;
+import java.util.ArrayList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.DisposableBean;
@@ -213,84 +213,55 @@ public class RagService implements DisposableBean {
 
         try {
             if (statusListener != null) statusListener.onStatus("Received request", 10);
-            logger.info("[{}] Non-streaming job started for message: {}", Instant.now(), request.getMessage());
 
             if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
-                logger.debug("Using Pure LLM mode for message: {}", request.getMessage());
-                logger.info("[{}] LLM (Pure) call started", Instant.now());
                 String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .user(request.getMessage())
-                    .call()
-                    .content(), this.timeoutExecutor)
+                    .user(request.getMessage()).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                logger.info("RAW LLM RESPONSE (Pure LLM): {}", llmAnswer);
-                logger.info("[{}] LLM (Pure) call finished", Instant.now());
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = "LLM Answer:\\n" + llmAnswer + "\\n\\nSource: LLM only";
+                answer = "LLM Answer:\n" + llmAnswer + "\n\nSource: LLM only";
                 source = "LLM";
 
             } else if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
                 if (statusListener != null) statusListener.onStatus("Querying database for relevant context", 20);
-                logger.debug("Checking for context (threshold 0.7) for message: {}", request.getMessage());
                 Query query = new Query(request.getMessage());
                 List<Document> docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                logger.info("Vector DB query (RAG+Fallback) returned {} documents.", docs.size());
                 String contextText = formatDocumentsToContext(docs);
-                String llmPrompt;
-                String sourceCode;
-                if (contextText != null && !contextText.isEmpty()) {
-                    llmPrompt = "Context:\\n" + contextText + "\\n\\nUser Question:\\n" + request.getMessage();
-                    sourceCode = "RAG context + LLM";
-                } else {
-                    llmPrompt = request.getMessage();
-                    sourceCode = "LLM only (no context found)";
-                }
-                logger.debug("LLM Prompt (RAG+Fallback Mode): User: [{}]", llmPrompt);
+                String llmPrompt = (contextText != null && !contextText.isEmpty()) 
+                    ? "Context:\n" + contextText + "\n\nUser Question:\n" + request.getMessage()
+                    : request.getMessage();
+                String sourceCode = (contextText != null && !contextText.isEmpty()) ? "RAG context + LLM" : "LLM only (no context found)";
+                
                 if (statusListener != null) statusListener.onStatus("Calling LLM with prompt", 70);
-                logger.info("[{}] LLM (RAG+Fallback) call started", Instant.now());
                 String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .user(llmPrompt)
-                    .call()
-                    .content(), this.timeoutExecutor)
+                    .user(llmPrompt).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                logger.info("RAW LLM RESPONSE (RAG+Fallback): {}", llmAnswer);
-                logger.info("[{}] LLM (RAG+Fallback) call finished", Instant.now());
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = llmAnswer + "\\n\\nSource: " + sourceCode;
+                answer = llmAnswer + "\n\nSource: " + sourceCode;
                 source = "LLM_FALLBACK";
 
             } else { // RAG Only
-                logger.debug("RAG Only mode for message: {}", request.getMessage());
                 if (statusListener != null) statusListener.onStatus("Sending Prompt to LLM for Pre-Processing", 15);
-                String originalPrompt = request.getMessage();
-                String cleanedPrompt = cleanQueryWithLlm(originalPrompt, "RAG ONLY");
-                if (statusListener != null) statusListener.onStatus("Pre-Processed Query returned", 18);
+                String cleanedPrompt = cleanQueryWithLlm(request.getMessage(), "RAG ONLY");
                 if (statusListener != null) statusListener.onStatus("Querying vector DB for relevant context", 20);
                 Query query = new Query(cleanedPrompt);
                 List<Document> docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                logger.info("Vector DB query (RAG Only) returned {} documents.", docs.size());
                 if (statusListener != null) statusListener.onStatus("Vector DB query complete: " + docs.size() + " results", 40);
                 String contextText = formatDocumentsToContext(docs);
                 if (contextText != null && !contextText.isEmpty()) {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to summarize context", 70);
-                    String llmSummaryPrompt = "Given the following context, answer the user's question as best as possible. Only use the provided context, do not invent new information.\\nContext:\\n" + contextText + "\\n\\nUser Question:\\n" + cleanedPrompt;
-                    logger.info("LLM Prompt (RAG Only) [first 500 chars]: {}", llmSummaryPrompt.substring(0, Math.min(500, llmSummaryPrompt.length())));
-                    logger.info("[{}] LLM (RAG Only) call started", Instant.now());
+                    String llmSummaryPrompt = "Given the following context, answer the user's question...[prompt]...";
                     String llmSummary = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                        .user(llmSummaryPrompt)
-                        .call()
-                        .content(), this.timeoutExecutor)
+                        .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
                         .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                    logger.info("RAW LLM RESPONSE (RAG Only Summary): {}", llmSummary);
-                    logger.info("[{}] LLM (RAG Only) call finished", Instant.now());
                     if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                    answer = llmSummary + "\\n\\nSource: RAG context summarized by LLM";
+                    answer = llmSummary + "\n\nSource: RAG context summarized by LLM";
                     source = "RAG";
                 } else {
-                    answer = "No relevant context was found to answer your question.\\n\\nSource: RAG (no context)";
+                    answer = "No relevant context was found to answer your question.\n\nSource: RAG (no context)";
                     source = "RAG_NO_CONTEXT";
                 }
             }
@@ -306,24 +277,23 @@ public class RagService implements DisposableBean {
             source = "ERROR";
             if (statusListener != null) statusListener.onStatus("Processing error: " + e.getMessage(), 100);
         }
+
         logger.info("Response generated - Source: {}, Mode: {}, Message: {}, Answer [first 200 chars]: {}", 
             source, responseMode, request.getMessage(), answer.substring(0, Math.min(answer.length(), 200)));
-        return new ChatResponse(answer, source);
+        return new ChatResponse.Builder().answer(answer).source(source).build();
     }
-
-    // New method for Raw RAG mode - no LLM summarization, no status listener
-    // This is called directly by JobController when request.isRawRag() is true.
+    
+    /**
+     * Processes a raw RAG request, returning a structured response with multiple bubbles.
+     * @param request The chat request containing the user's message
+     * @return ChatResponse with a list of bubbles for the frontend
+     */
     public ChatResponse chatRaw(ChatRequest request) {
         String originalPrompt = request.getMessage();
-        String answer;
-        String source;
         logger.info("Processing Raw RAG request - Message: {}", originalPrompt);
 
         try {
-            // Query cleaning is still beneficial for Raw RAG to improve vector search recall
             String cleanedPrompt = cleanQueryWithLlm(originalPrompt, "RAW RAG");
-            logger.info("[Raw RAG] Original user prompt: {}, Cleaned/rephrased prompt: {}", originalPrompt, cleanedPrompt);
-            
             Query query = new Query(cleanedPrompt);
             List<Document> docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), this.timeoutExecutor)
                 .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -331,35 +301,53 @@ public class RagService implements DisposableBean {
             logger.info("Vector DB query (Raw RAG) returned {} documents.", docs != null ? docs.size() : 0);
 
             if (docs != null && !docs.isEmpty()) {
-                StringBuilder sb = new StringBuilder();
+                List<String> bubbles = new ArrayList<>();
+                bubbles.add("<b>Retrieved Context Documents</b>");
+
                 for (int i = 0; i < docs.size(); i++) {
                     Document doc = docs.get(i);
-                    sb.append("\\n--- Document ").append(i + 1).append(" ---\\n");
-                    sb.append(doc.getFormattedContent()); // Using getFormattedContent as per existing RAG logic
-                    if (doc.getMetadata() != null && !doc.getMetadata().isEmpty()) {
-                        sb.append("\\nMetadata: ").append(doc.getMetadata().toString());
+
+                    // Bubble for Header
+                    StringBuilder headerText = new StringBuilder();
+                    headerText.append("<b>Document ").append(i + 1).append(" of ").append(docs.size());
+                    if (doc.getMetadata() != null && doc.getMetadata().containsKey("distance")) {
+                        Object distObj = doc.getMetadata().get("distance");
+                        if (distObj instanceof Number) {
+                             headerText.append(String.format(" (distance: %.4f)", ((Number) distObj).floatValue()));
+                        } else {
+                             headerText.append(" (distance: ").append(distObj.toString()).append(")");
+                        }
                     }
-                    sb.append("\\n");
+                    headerText.append("</b>");
+                    bubbles.add(headerText.toString());
+
+                    // Bubble for Content
+                    String content = doc.getFormattedContent()
+                        .replaceAll("\\s+", " ")
+                        .replaceAll("distance:\\s*[0-9.]+", "")
+                        .replaceAll("\\s{2,}", " ")
+                        .trim();
+
+                    if (!content.isEmpty() && !content.endsWith(".") && !content.endsWith("!") && !content.endsWith("?")) {
+                        content = content + ".";
+                    }
+                    bubbles.add(content);
                 }
-                answer = sb.toString();
-                source = "RAG (" + docs.size() + " docs)";
+                String source = String.format("RAG (%d documents retrieved)", docs.size());
+                return new ChatResponse.Builder().bubbles(bubbles).source(source).build();
             } else {
-                answer = "No relevant context was found to answer your question (Raw RAG mode).";
-                source = "RAG (0 docs)";
+                String answer = "No relevant context was found to answer your question.";
+                String source = "RAG (no documents found)";
+                return new ChatResponse.Builder().answer(answer).source(source).build();
             }
-            logger.info("Raw RAG response generated - Source: {}, Message: {}, Answer [first 200 chars]: {}", 
-                source, originalPrompt, answer.substring(0, Math.min(answer.length(), 200)));
-            return new ChatResponse(answer, source);
         } catch (TimeoutException te) {
+            String errorMsg = "The request timed out while searching for relevant information.";
             logger.error("Raw RAG processing timed out for message: {}", originalPrompt, te);
-            answer = "The Raw RAG request timed out while processing.";
-            source = "ERROR_TIMEOUT";
-            return new ChatResponse(answer, source);
+            return new ChatResponse.Builder().answer(errorMsg).source("ERROR_TIMEOUT").build();
         } catch (Exception e) {
+            String errorMsg = "An error occurred while processing your request: " + e.getMessage();
             logger.error("Error processing Raw RAG request for message: {}", originalPrompt, e);
-            answer = "An error occurred while processing your Raw RAG request: " + e.getMessage();
-            source = "ERROR";
-            return new ChatResponse(answer, source);
+            return new ChatResponse.Builder().answer(errorMsg).source("ERROR").build();
         }
     }
 
