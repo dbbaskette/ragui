@@ -17,10 +17,13 @@ public class SecurityConfig {
         http
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/css/**", "/js/**", "/images/**", "/webjars/**").permitAll()
+                .requestMatchers("/api/**").permitAll()  // Allow all API endpoints
+                .requestMatchers("/", "/index.html").permitAll()  // Allow main page
                 .anyRequest().authenticated()
             )
-            .formLogin();
-        http.logout(logout -> logout.permitAll());
+            .formLogin(form -> form.permitAll())
+            .csrf(csrf -> csrf.disable())  // Disable CSRF for API calls
+            .logout(logout -> logout.permitAll());
         return http.build();
     }
 

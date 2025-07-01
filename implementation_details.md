@@ -23,6 +23,13 @@ When a chat request is processed, the backend status will update as follows:
 
 Frontend polling `/api/status` will see these updates in real-time.
 
+## Security Configuration Fix (2025-07-01)
+- **Issue**: 403 Forbidden errors when frontend tries to access API endpoints in Cloud Foundry
+- **Root Cause**: Spring Security was requiring authentication for all requests including API endpoints
+- **Solution**: Modified `SecurityConfig.java` to permit all `/api/**` endpoints and disable CSRF for API calls
+- **Impact**: Frontend can now successfully make API calls without authentication barriers
+- **Security Note**: This is a temporary fix for development/demo purposes. For production, implement proper API authentication (JWT, API keys, etc.)
+
 ---
 
 *See also: gotchas.md for edge cases and warnings.*
