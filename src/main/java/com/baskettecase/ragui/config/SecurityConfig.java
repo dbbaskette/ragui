@@ -17,7 +17,9 @@ public class SecurityConfig {
         http
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/css/**", "/js/**", "/images/**", "/webjars/**").permitAll()
+                .requestMatchers("/*.css", "/*.js", "/*.png", "/*.jpg", "/*.ico").permitAll()  // Allow root-level static files
                 .requestMatchers("/api/**").permitAll()  // Allow all API endpoints
+                .requestMatchers("/actuator/**").permitAll()  // Allow actuator endpoints
                 .requestMatchers("/", "/index.html").permitAll()  // Allow main page
                 .anyRequest().authenticated()
             )
