@@ -101,9 +101,9 @@ body {
 }
 
 .chat-messages {
-    height: 450px; /* Increased height */
-    min-height: 250px;
-    max-height: 600px; /* Increased max-height */
+    height: 280px; /* Reduced from 320px for more compact layout */
+    min-height: 180px;
+    max-height: 350px; /* Reduced from 400px */
     overflow-y: auto;
     margin-bottom: 0;
     border: 1px solid #e5e7ef;
@@ -118,10 +118,16 @@ body {
 
 @media (max-width: 700px) {
     .chat-messages {
-        height: 220px;
-        max-height: 220px;
+        height: 160px; /* Reduced mobile height even more */
+        max-height: 180px;
+    }
+    .status-log-panel {
+        max-height: 50px; /* Even more compact on mobile */
+        font-size: 0.5em; /* Smaller font on mobile */
+        padding: 3px 6px; /* Reduced padding on mobile */
     }
 }
+
 .msg {
     margin: 6px 0;
     padding: 8px 12px;
@@ -215,4 +221,32 @@ body {
 .chat-form button:disabled {
     background: #b0bec5;
     cursor: not-allowed;
+}
+
+/* Status Log Panel - much smaller font and compact layout */
+.status-log-panel {
+    max-height: 80px; /* Reduced from 100px to 80px */
+    overflow-y: auto;
+    background: #f8f9fa;
+    border: 1px solid #e0e5f2;
+    border-radius: 6px;
+    padding: 4px 8px; /* Reduced padding further */
+    margin-top: 10px;
+    font-size: 0.5em !important; /* Even smaller font size */
+    line-height: 1.0 !important; /* Tighter line spacing */
+    color: #666;
+}
+
+.status-log-panel .status-log-entry {
+    margin: 0; /* Remove all margin */
+    padding: 0; /* Remove all padding */
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+    font-size: 0.5em !important; /* Explicit tiny font size */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.status-log-panel .status-log-entry:last-child {
+    color: #1a73e8; /* Highlight the most recent status */
 }

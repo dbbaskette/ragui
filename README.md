@@ -77,7 +77,15 @@ The application will be available at `http://localhost:8080`.
 
 ## Deployment
 
-The `manifest.yml` is included for deployment to Cloud Foundry. The `release.sh` script can be used to automate the release process.
+### Quick Deployment
+Use the `deploy.sh` script for streamlined build and deployment:
+```bash
+./deploy.sh          # Build and deploy
+./deploy.sh --help   # See all options
+```
+
+### Advanced Deployment
+The `manifest.yml` is included for deployment to Cloud Foundry. The `release.sh` script can be used to automate the release process with versioning.
 
 ## Contributing
 

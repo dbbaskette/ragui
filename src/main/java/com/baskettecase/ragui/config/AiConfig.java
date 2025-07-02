@@ -4,7 +4,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
+import java.util.Map;
 // Removed explicit OpenAI imports as we'll rely on auto-configuration
 
 /**
@@ -31,6 +34,19 @@ public class AiConfig {
     public ChatClient chatClient(ChatModel chatModel) {
         // Spring AI auto-configures the ChatModel bean (e.g., OpenAiChatModel)
         // based on classpath dependencies and properties (application.properties or VCAP).
+        
+        // If this is an OpenAI model, configure it to disable thinking mode
+        if (chatModel instanceof OpenAiChatModel openAiChatModel) {
+            // Create default options with thinking disabled
+            OpenAiChatOptions defaultOptions = OpenAiChatOptions.builder()
+                .httpHeaders(Map.of("X-Disable-Thinking", "true")) // Custom header attempt
+                .build();
+            
+            return ChatClient.builder(chatModel)
+                .defaultOptions(defaultOptions)
+                .build();
+        }
+        
         return ChatClient.builder(chatModel).build();
     }
 }

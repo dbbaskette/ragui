@@ -13,7 +13,7 @@
 
     <groupId>com.baskettecase</groupId>
     <artifactId>ragui</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
     <name>ragui</name>
     <description>Retrieval Augmented Generation UI with Spring AI, Ollama, and pgvector</description>
 
@@ -87,7 +87,7 @@
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
-			<version>42.7.6</version>
+			<version>42.7.7</version>
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
@@ -105,7 +105,7 @@
 			<artifactId>lombok</artifactId>
 			<optional>true</optional>
 		</dependency>
-	</dependencies>
+	 </dependencies>
 	<dependencyManagement>
 		<dependencies>
 			<dependency>

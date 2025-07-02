@@ -38,7 +38,221 @@ Frontend polling `/api/status` will see these updates in real-time.
 - **Code Analysis**: No authentication-dependent code exists - all controllers and services work anonymously
 - **Security Note**: This is a temporary fix for development/demo purposes. For production, implement proper API authentication (JWT, API keys, etc.)
 
+## Deployment Script (2025-07-01)
+- **New Script**: Added `deploy.sh` for streamlined build and deployment workflow
+- **Features**:
+  - Combines Maven build (`mvn clean package`) and Cloud Foundry deployment (`cf push`)
+  - Auto-detects current version from `pom.xml` and updates JAR path in manifest
+  - Validates CF CLI availability and login status
+  - Provides colored output with clear status indicators
+  - Supports `--skip-build` for quick redeploys
+  - Supports `--app-name` for deploying to different app instances
+- **Usage Examples**:
+  - `./deploy.sh` - Full build and deploy
+  - `./deploy.sh --skip-build` - Deploy existing JAR (faster)
+  - `./deploy.sh --app-name ragui-prod` - Deploy to production instance
+- **Benefits**: Simplifies the deploy process vs. manual `mvn clean package` + `cf push`
+
 ---
 
 *See also: gotchas.md for edge cases and warnings.*
+
+# RAG UI Implementation Details
+
+## Overview
+This document contains technical implementation details, configuration notes, and lessons learned during the development and deployment of the RAG UI application.
+
+## RAG Only Mode Improvements (Latest Update)
+
+### RAG Only Response Quality Fix
+**Problem**: RAG Only mode was returning verbose LLM reasoning steps instead of clean, direct answers. Users were seeing all the internal thinking process like "Looking through the context", "Let me check again", etc.
+
+**Root Cause**: 
+- **Streaming vs. Reasoning Conflict**: Reasoning models naturally generate thinking chunks first, and streaming sends these chunks immediately to the user
+- Chunk-level filtering couldn't effectively separate reasoning from final answers  
+- Fighting the natural flow of reasoning models instead of working with it
+
+**Solution**:
+- **Hybrid Approach - Non-Streaming Processing + Simulated Streaming**: Let the LLM complete its full response (including internal thinking), clean it, then simulate streaming to maintain consistent UX
+- **Enhanced System Prompt**: Updated to explicitly allow internal thinking while requiring clean output: "You may think through the question internally, but your response must contain ONLY the final answer based on the provided context"
+- **Improved Response Processing**: Post-process the complete response using `cleanRawLlmResponse()` to extract the final answer and remove any reasoning that slipped through
+- **Streaming Simulation**: Added `simulateStreamingResponse()` method that chunks the clean response word-by-word to match the streaming experience of other modes
+- **Better Error Handling**: Added proper timeout and error handling for the non-streaming approach
+
+**Benefits**:
+- **Better Answer Quality**: LLM can use full reasoning capabilities to analyze context
+- **Clean User Experience**: Users only see the final, polished answer without reasoning steps
+- **Consistent UX**: All response modes now have the same streaming appearance to users
+- **Reliable Output**: No more reasoning chunks leaking through to the frontend
+- **Optimal Performance**: Single LLM call with simulated streaming for best of both worlds
+
+**Key Behavioral Changes**:
+- **RAG Only**: Now provides clean, direct answers sourced only from retrieved context (appears streaming but internally processes non-streaming for quality)
+- **RAG + LLM Fallback**: Still allows broader LLM knowledge when context is insufficient (true streaming)
+- **Pure LLM**: Unchanged - uses full LLM capabilities without context restrictions (true streaming)
+
+**User Experience**: All modes now appear to stream text naturally, maintaining consistent interface behavior while RAG Only delivers superior answer quality through internal processing.
+
+**Files Modified**:
+- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Switched RAG Only to non-streaming, enhanced system prompts, improved response processing
+
+## RAG Configuration Fixes (Previous Update)
+
+### Issues Identified and Resolved
+
+#### 1. Vector Search Similarity Threshold Too High
+**Problem**: The `VectorStoreDocumentRetriever` was hardcoded with a similarity threshold of 0.7, which is very restrictive for Spring AI 1.0.0. This caused the vector search to return 0 results even for queries that should match existing documents.
+
+**Root Cause**: Spring AI 1.0.0 documentation shows that the default threshold is 0.0 (accept all), and values closer to 1 indicate higher similarity. A threshold of 0.7 was excluding too many potentially relevant documents.
+
+**Solution**: 
+- Made similarity threshold configurable via `ragui.vector.similarity-threshold` property
+- Set default to 0.5 (more permissive)
+- Added `ragui.vector.top-k` property for configurable result count
+- Updated both local and cloud configurations
+
+**Configuration Added**:
+```properties
+# RAG Configuration - More permissive similarity threshold
+ragui.vector.similarity-threshold=0.3
+ragui.vector.top-k=5
+```
+
+#### 2. Vector Store Dimension Mismatch
+**Problem**: Local development used 768 dimensions while cloud used 1536 dimensions, suggesting different embedding models.
+
+**Solution**: 
+- Standardized both environments to use 1536 dimensions (OpenAI text-embedding-ada-002 standard)
+- Added explicit embedding model configuration
+- Ensured consistency between local and cloud profiles
+
+#### 3. Poor Error Message Formatting
+**Problem**: Error messages showed technical details like "No relevant context was found to answer your question.\n\nSource: 0 (no context)" which is confusing for users.
+
+**Solution**: Cleaned up all error messages to be user-friendly:
+- "I couldn't find relevant information in the knowledge base to answer your question."
+- "I couldn't find any relevant documents in the knowledge base for your question."
+
+#### 4. Missing Embedding Model Configuration
+**Problem**: No explicit embedding model configuration could lead to inconsistent vector dimensions.
+
+**Solution**: Added explicit embedding model configuration in both profiles:
+```properties
+# Local
+spring.ai.openai.embedding.options.model=text-embedding-ada-002
+
+# Cloud
+spring.ai.openai.embedding.options.model=${vcap.services.embed-model.credentials.model_name:text-embedding-ada-002}
+```
+
+### Files Modified
+- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Made similarity threshold configurable, improved error messages
+- `src/main/resources/application.properties`: Added RAG config, fixed dimensions, added embedding model
+- `src/main/resources/application-cloud.properties`: Added RAG config, added embedding model config
+
+### Testing Recommendation
+After these changes, test with:
+1. Simple queries that should definitely match (e.g., if you have Spring Boot docs, query "What is Spring Boot?")
+2. Verify that similarity threshold can be adjusted via configuration
+3. Check that error messages are now user-friendly when no matches are found
+
+## Previous Implementation Details
+
+## Security Configuration Updates
+
+### Spring Security Configuration Fix
+**Issue**: After deploying to Cloud Foundry, the application returned 403 Forbidden errors for API calls.
+**Cause**: Spring Security was requiring authentication for all requests, including the `/api/**` endpoints used by the frontend.
+**Solution**: Updated `SecurityConfig.java` to permit API endpoints and static resources without authentication.
+
+**Key Changes**:
+- Added `.requestMatchers("/api/**").permitAll()` for API endpoints
+- Added `.requestMatchers("/*.css", "/*.js", "/*.png", "/*.ico", "/*.html").permitAll()` for static files
+- Disabled CSRF with `.csrf(csrf -> csrf.disable())`
+- Added `/actuator/**` to permitted paths
+
+### Static Resource Serving Fix
+**Issue**: CSS and JavaScript files were being served as HTML content (redirected to login page).
+**Solution**: Added specific matchers for root-level static files in security configuration.
+
+## Actuator Configuration
+**Change**: Set `management.endpoint.health.show-details=always` to display health check details after removing authentication.
+
+## UI Layout Improvements
+
+### Status Panel Optimization
+**Issue**: With 8+ status messages, the status area and chat window grew so large that response mode controls were pushed off-screen.
+
+**Solution**: Implemented comprehensive CSS improvements:
+- Reduced chat window height from 450px to 320px on desktop
+- Added status log panel with:
+  - Maximum height of 100px with scrolling
+  - Smaller font size (0.65em)
+  - Compact spacing (2px between entries)
+  - Monospace font for consistency
+  - Automatic scroll to newest entries
+- Enhanced mobile responsiveness with even smaller fonts and heights
+- Status entries now show ellipsis for long text
+- Most recent status entry is highlighted
+
+**Files Modified**: `src/main/resources/static/style.css`
+
+## Deployment Automation
+
+### Deploy Script Creation
+Created `deploy.sh` script for streamlined deployment process:
+- Combines Maven build and Cloud Foundry deployment
+- Auto-detects version from pom.xml
+- Validates CF CLI installation and login status
+- Updates manifest.yml with correct JAR path automatically
+- Supports command-line options (`--skip-build`, `--app-name`)
+- Provides colored output and status indicators
+- Made executable with proper permissions
+
+**Usage**: `./deploy.sh` or `./deploy.sh --skip-build --app-name my-app`
+
+## Architecture Notes
+
+### Vector Store
+- Using PostgreSQL with pgvector extension
+- Configured for COSINE_DISTANCE similarity
+- Table name: `vector_store`
+- HNSW index type for efficient similarity search
+
+### Spring AI Integration
+- Spring AI 1.0.0 with OpenAI integration
+- Automatic configuration via Cloud Foundry VCAP services
+- RAG implementation using VectorStoreDocumentRetriever
+- Streaming and non-streaming chat support
+
+### Job Management
+- Asynchronous processing with ExecutorService
+- Timeout handling (180 seconds default)
+- Status tracking with progress indicators
+- Support for multiple response modes (RAG-only, RAG+LLM fallback, Pure LLM, Raw RAG)
+
+## Gotchas and Lessons Learned
+
+### Cloud Foundry Deployment
+1. **VCAP Services**: Ensure service names in manifest.yml match bound services
+2. **Memory Allocation**: 2GB memory allocation needed for Spring AI + OpenAI integration
+3. **Profile Activation**: Use `SPRING_PROFILES_ACTIVE: cloud` for environment-specific config
+4. **Static Resources**: Spring Security can interfere with static file serving
+
+### Spring Security
+1. **API Endpoints**: Remember to explicitly permit API endpoints used by frontend
+2. **Static Files**: Root-level static files need specific security matchers
+3. **CSRF**: Disable CSRF for API-only applications to avoid token issues
+
+### Spring AI Vector Search
+1. **Similarity Thresholds**: Lower thresholds (0.3-0.5) work better than high thresholds (0.7+)
+2. **Dimensions**: Ensure vector store dimensions match embedding model dimensions
+3. **Error Handling**: Provide user-friendly messages for no-match scenarios
+4. **Configuration**: Make similarity thresholds configurable rather than hardcoded
+5. **RAG Only Mode**: Requires strong system prompts and response filtering to prevent LLM reasoning display
+
+### UI Considerations
+1. **Status Logging**: Implement scrollable, height-limited status panels for better UX
+2. **Mobile Responsiveness**: Test with various screen sizes and status message counts
+3. **Response Mode Controls**: Ensure critical UI elements remain visible with dynamic content
 

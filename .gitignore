@@ -1,4 +1,5 @@
 .vscode/
 target/
 src/main/resources/static/version.js
+manifest.tmp
 
