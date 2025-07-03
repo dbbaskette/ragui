@@ -77,9 +77,10 @@ public class RagService implements DisposableBean {
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("Step 1: Think about your response in a <thinking> block. " +
-                                   "Step 2: Provide your final answer in an <answer> block. " +
-                                   "Always include both blocks in your response.")
+                            .system("Think briefly about your response in a <thinking> block (2-3 sentences max). " +
+                                   "Then provide your complete final answer in an <answer> block. " +
+                                   "Keep thinking concise to leave room for a full answer. " +
+                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>")
                             .user(request.getMessage())
                             .call()
                             .content();
@@ -138,9 +139,10 @@ public class RagService implements DisposableBean {
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("Step 1: Think about your response in a <thinking> block. " +
-                                   "Step 2: Provide your final answer in an <answer> block. " +
-                                   "Always include both blocks in your response.")
+                            .system("Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
+                                   "Then provide your complete final answer in an <answer> block. " +
+                                   "Keep thinking concise to leave room for a full answer. " +
+                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>")
                             .user(llmPrompt)
                             .call()
                             .content();
@@ -222,10 +224,10 @@ public class RagService implements DisposableBean {
                     try {
                         // Use non-streaming to get complete response, then clean it
                         String fullResponse = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                            .system("You are a helpful assistant. Your task is to follow a strict two-step process. " +
-                                    "Step 1: First, think through the user's question step-by-step in a <thinking> block. Analyze the provided context thoroughly. " +
-                                    "Step 2: After your thinking, you MUST provide a concise, final answer based on your thinking and the context within an <answer> block. " +
-                                    "The user will ONLY see what is inside the <answer> block. Do NOT write anything outside the <thinking> and <answer> blocks. " +
+                            .system("Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
+                                    "Then provide your complete final answer in an <answer> block based on the provided context. " +
+                                    "Keep thinking concise to leave room for a full answer. " +
+                                    "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer> " +
                                     "If the context does not contain the answer, state that clearly inside the <answer> block.")
                             .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
                             .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -466,9 +468,28 @@ public class RagService implements DisposableBean {
         if (docs == null || docs.isEmpty()) {
             return null;
         }
-        return docs.stream()
-            .map(Document::getFormattedContent)
-            .collect(Collectors.joining("\\n\\n"));
+        
+        // Limit context size to save tokens for thinking + answer
+        final int MAX_CONTEXT_CHARS = 8000; // Reasonable limit to save tokens for response
+        StringBuilder context = new StringBuilder();
+        
+        for (Document doc : docs) {
+            String content = doc.getFormattedContent();
+            if (context.length() + content.length() + 4 > MAX_CONTEXT_CHARS) {
+                // Truncate the current document to fit within limit
+                int remainingChars = MAX_CONTEXT_CHARS - context.length() - 4;
+                if (remainingChars > 100) { // Only add if we have meaningful space left
+                    content = content.substring(0, remainingChars) + "...";
+                    context.append(content).append("\\n\\n");
+                }
+                break; // Stop adding more documents
+            }
+            context.append(content).append("\\n\\n");
+        }
+        
+        String result = context.toString().trim();
+        logger.info("Context formatted: {} characters from {} documents", result.length(), docs.size());
+        return result;
     }
 
     private String determineResponseMode(ChatRequest request) {
@@ -754,18 +775,47 @@ public class RagService implements DisposableBean {
         
         logger.warn("Could not find <answer> tag in LLM response. Raw response: {}", llmResponse);
         
-        // Fallback: If no <answer> tag, try to find text after </thinking>
+        // Enhanced fallback: Try to find text after </thinking> tag first
         int thinkingEndIndex = llmResponse.lastIndexOf("</thinking>");
         if (thinkingEndIndex != -1) {
             String potentialAnswer = llmResponse.substring(thinkingEndIndex + "</thinking>".length()).trim();
-            if (!potentialAnswer.isEmpty()) {
+            if (!potentialAnswer.isEmpty() && potentialAnswer.length() > 10) {
                 logger.warn("Found potential answer after </thinking> tag: {}", potentialAnswer);
                 return potentialAnswer;
             }
         }
         
-        // Final fallback
-        return "Could not extract a final answer from the model's response. Please try rephrasing your question.";
+        // If no thinking tags, use the raw response but clean it
+        String cleaned = llmResponse.trim();
+        
+        // Remove common thinking patterns if they appear at the start
+        if (cleaned.toLowerCase().startsWith("thinking:") || cleaned.toLowerCase().startsWith("let me think") || 
+            cleaned.toLowerCase().startsWith("okay,") || cleaned.toLowerCase().startsWith("first,")) {
+            
+            // Try to find the actual answer after thinking content
+            String[] lines = cleaned.split("\n");
+            StringBuilder result = new StringBuilder();
+            boolean foundAnswer = false;
+            
+            for (String line : lines) {
+                String lowerLine = line.toLowerCase().trim();
+                // Skip obvious thinking lines
+                if (!lowerLine.startsWith("thinking:") && !lowerLine.startsWith("let me") && 
+                    !lowerLine.startsWith("okay,") && !lowerLine.startsWith("first,") &&
+                    !lowerLine.startsWith("looking") && !lowerLine.contains("i need to") &&
+                    line.trim().length() > 10) {
+                    result.append(line.trim()).append(" ");
+                    foundAnswer = true;
+                }
+            }
+            
+            if (foundAnswer) {
+                cleaned = result.toString().trim();
+            }
+        }
+        
+        // If still no good answer, return the raw response (better than nothing)
+        return cleaned.isEmpty() ? "Could not extract a clear answer. Please try rephrasing your question." : cleaned;
     }
 
     /**

@@ -37,9 +37,11 @@ public class AiConfig {
         
         // If this is an OpenAI model, configure it to disable thinking mode
         if (chatModel instanceof OpenAiChatModel openAiChatModel) {
-            // Create default options with thinking disabled
+            // Create default options optimized for thinking + complete answers
             OpenAiChatOptions defaultOptions = OpenAiChatOptions.builder()
-                .httpHeaders(Map.of("X-Disable-Thinking", "true")) // Custom header attempt
+                .maxTokens(4096) // Increase max tokens significantly to accommodate thinking + answer
+                .temperature(0.3) // Lower temperature for more focused responses
+                .topP(0.9) // Focus probability mass
                 .build();
             
             return ChatClient.builder(chatModel)
