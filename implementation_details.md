@@ -62,7 +62,129 @@ Frontend polling `/api/status` will see these updates in real-time.
 ## Overview
 This document contains technical implementation details, configuration notes, and lessons learned during the development and deployment of the RAG UI application.
 
-## RAG Only Mode Improvements (Latest Update)
+## EmbedProc RabbitMQ Monitoring Integration (Latest Update)
+
+### Overview
+Added comprehensive RabbitMQ integration to monitor embedProc instances in real-time. This feature consumes metrics from the `embedproc.metrics` queue and provides REST endpoints to view processing status.
+
+### New Components Added
+
+#### Dependencies
+- **spring-boot-starter-amqp**: Added to `pom.xml` for RabbitMQ support
+
+#### Configuration Properties
+**Local Development (`application.properties`)**:
+```properties
+# RabbitMQ Configuration for embedProc streams (local development)
+spring.rabbitmq.host=${RABBIT_HOST:localhost}
+spring.rabbitmq.port=${RABBIT_PORT:5672}
+spring.rabbitmq.username=${RABBIT_USER:guest}
+spring.rabbitmq.password=${RABBIT_PASSWORD:guest}
+spring.rabbitmq.virtual-host=${RABBIT_VHOST:/}
+
+# EmbedProc Monitoring Configuration
+app.monitoring.rabbitmq.queue-name=embedproc.metrics
+app.monitoring.rabbitmq.enabled=${EMBEDPROC_MONITORING_ENABLED:true}
+app.monitoring.rabbitmq.cache-duration-minutes=${EMBEDPROC_CACHE_DURATION:30}
+```
+
+**Cloud Deployment (`application-cloud.properties`)**:
+```properties
+# RabbitMQ Configuration for embedProc streams
+spring.rabbitmq.host=${vcap.services.rabbitmq.credentials.host:localhost}
+spring.rabbitmq.port=${vcap.services.rabbitmq.credentials.port:5672}
+spring.rabbitmq.username=${vcap.services.rabbitmq.credentials.username:guest}
+spring.rabbitmq.password=${vcap.services.rabbitmq.credentials.password:guest}
+spring.rabbitmq.virtual-host=${vcap.services.rabbitmq.credentials.vhost:/}
+```
+
+#### New Classes Created
+
+1. **EmbedProcMetrics.java** - DTO for embedProc metrics message format
+   - Maps JSON from RabbitMQ queue: `instanceId`, `timestamp`, `totalChunks`, `processedChunks`, `errorCount`, `processingRate`, `uptime`, `status`
+   - Includes calculated `progressPercentage` property
+   - Tracks `lastUpdated` timestamp for cache management
+
+2. **EmbedStatusResponse.java** - Response DTO for `/embed-status` endpoint
+   - Contains list of current instances and summary statistics
+   - Summary includes: total/active instances, processed chunks, error counts, processing rates, status distribution
+
+3. **RabbitMQConfig.java** - RabbitMQ configuration
+   - Declares `embedproc.metrics` queue as durable
+   - Configures Jackson JSON message converter
+   - Only activated when `app.monitoring.rabbitmq.enabled=true`
+
+4. **EmbedProcMonitoringService.java** - Core monitoring service
+   - `@RabbitListener` for consuming metrics from queue
+   - Thread-safe cache using `ConcurrentHashMap`
+   - Automatic cleanup of stale entries (configurable duration)
+   - Generates summary statistics and status counts
+
+5. **EmbedStatusController.java** - REST controller
+   - Main endpoint: `GET /api/embed-status` - Returns all instance statuses
+   - Instance-specific: `GET /api/embed-status/{instanceId}` - Single instance status
+   - Debug endpoints: `/embed-status/debug/cache` and `/embed-status/debug/clear-cache`
+   - Health check: `/embed-status/health`
+
+### Features Implemented
+
+- **Real-time Monitoring**: Automatically consumes RabbitMQ messages as embedProc instances send status updates
+- **Intelligent Caching**: Maintains recent status of all instances with configurable expiration (default 30 minutes)
+- **Summary Statistics**: Aggregates data across all instances (total processed, error counts, average rates)
+- **Status Tracking**: Counts instances by status (PROCESSING, ERROR, COMPLETED, etc.)
+- **Error Handling**: Graceful handling of RabbitMQ connection issues and malformed messages
+- **Conditional Activation**: Can be disabled via `app.monitoring.rabbitmq.enabled=false`
+- **Debug Capabilities**: Cache inspection and manual cache clearing for troubleshooting
+
+### API Endpoints
+
+- `GET /api/embed-status` - Current status of all embedProc instances
+- `GET /api/embed-status/{instanceId}` - Status of specific instance  
+- `GET /api/embed-status/health` - Health check for monitoring system
+- `GET /api/embed-status/debug/cache` - Cache statistics and debug info
+- `POST /api/embed-status/debug/clear-cache` - Manual cache clearing
+
+### Example Response Format
+```json
+{
+  "instances": [
+    {
+      "instanceId": "embedProc-worker-1",
+      "timestamp": "2025-01-03T10:30:00Z",
+      "totalChunks": 1500,
+      "processedChunks": 750,
+      "errorCount": 2,
+      "processingRate": 12.5,
+      "uptime": "2h 15m",
+      "status": "PROCESSING",
+      "lastUpdated": "2025-01-03T10:30:05Z",
+      "progressPercentage": 50.0
+    }
+  ],
+  "summary": {
+    "totalInstances": 1,
+    "activeInstances": 1,
+    "totalProcessedChunks": 750,
+    "totalErrorCount": 2,
+    "averageProcessingRate": 12.5,
+    "lastRefresh": "2025-01-03T10:30:05Z",
+    "statusCounts": {
+      "PROCESSING": 1
+    }
+  }
+}
+```
+
+### Integration Benefits
+- **Non-intrusive**: Additive feature, no existing functionality modified
+- **Configurable**: All RabbitMQ settings via properties, can be disabled
+- **Cloud-ready**: Supports Cloud Foundry VCAP services binding
+- **Production-ready**: Proper error handling, logging, and health checks
+- **RESTful**: Standard REST API patterns with appropriate HTTP status codes
+
+## RAG Mode Improvements (Previous Update)
+
+### RAG Only Mode Improvements (Latest Update)
 
 ### RAG Only Response Quality Fix
 **Problem**: RAG Only mode was returning verbose LLM reasoning steps instead of clean, direct answers. Users were seeing all the internal thinking process like "Looking through the context", "Let me check again", etc.
