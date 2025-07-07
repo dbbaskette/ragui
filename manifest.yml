@@ -18,3 +18,4 @@ applications:
     - chat-model
     #- chat-mistral-vision
     - embed-model
+    - messaging-c856b29a-1c7e-4fd5-ab3b-0633b90869cc
