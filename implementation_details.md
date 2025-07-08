@@ -182,6 +182,103 @@ spring.rabbitmq.virtual-host=${vcap.services.rabbitmq.credentials.vhost:/}
 - **Production-ready**: Proper error handling, logging, and health checks
 - **RESTful**: Standard REST API patterns with appropriate HTTP status codes
 
+## Embed Status Dashboard UI (Latest Update)
+
+### Overview
+Created a modern, responsive web dashboard for monitoring embedProc instances at `/embed-status`. The dashboard provides real-time visualization of processing status, metrics, and instance health.
+
+### Technical Implementation
+
+#### Frontend Architecture
+- **Thymeleaf Template**: Server-side rendered HTML with initial data population
+- **Responsive Design**: CSS Grid and Flexbox for mobile-friendly layout
+- **Real-time Updates**: JavaScript polling with 30-second auto-refresh
+- **Modern UI**: Glassmorphism design with gradient backgrounds and smooth animations
+
+#### New Files Created
+1. **`src/main/resources/templates/embed-status.html`** - Thymeleaf template
+   - Server-side rendering of initial data
+   - Responsive grid layout for instance cards
+   - Status indicators and progress bars
+   - Error handling for missing data
+
+2. **`src/main/resources/static/embed-status.css`** - Modern styling
+   - Glassmorphism design with backdrop blur effects
+   - Gradient backgrounds and smooth animations
+   - Responsive grid layouts
+   - Status color coding (active=green, idle=orange, error=red, offline=gray)
+
+3. **`src/main/resources/static/embed-status.js`** - Interactive functionality
+   - Auto-refresh every 30 seconds
+   - Manual refresh button with loading states
+   - Clear cache functionality with confirmation dialog
+   - Dynamic data updates via AJAX
+   - Error handling and user feedback
+   - Notification system for user actions
+
+#### Backend Integration
+1. **`EmbedStatusPageController.java`** - Web page controller
+   - Serves `/embed-status` route
+   - Populates initial data in Thymeleaf model
+   - Handles errors gracefully
+
+2. **Security Configuration** - Updated `SecurityConfig.java`
+   - Permits `/embed-status` route without authentication
+   - Maintains existing API endpoint security
+
+3. **Dependencies** - Added `spring-boot-starter-thymeleaf`
+   - Enables server-side template rendering
+   - Provides template engine for dynamic content
+
+### Dashboard Features
+
+#### Summary Cards
+- **Total Instances**: Count of all embedProc instances
+- **Active Instances**: Currently processing instances
+- **Processing Rate**: Average chunks per second across all instances
+- **Total Chunks**: Cumulative processed chunks
+- **Error Count**: Total errors across all instances
+
+#### Instance Details
+- **Individual Cards**: One card per embedProc instance
+- **Real-time Metrics**: Processed chunks, total chunks, processing rate, errors
+- **Progress Visualization**: Progress bars showing completion percentage
+- **Status Indicators**: Color-coded badges (active, idle, error, offline)
+- **Timestamps**: Last updated time and uptime information
+
+#### Interactive Elements
+- **Auto-refresh**: Updates every 30 seconds automatically
+- **Manual Refresh**: Button to force immediate update
+- **Clear Cache**: Button to clear monitoring cache and refresh data
+- **Loading States**: Visual feedback during data loading
+- **Error Handling**: Graceful display of connection errors
+- **Notifications**: Success/error messages for user actions
+
+### Responsive Design
+- **Mobile-friendly**: Adapts to different screen sizes
+- **Grid Layout**: Responsive grid for instance cards
+- **Touch-friendly**: Large buttons and touch targets
+- **Progressive Enhancement**: Works without JavaScript (server-side rendering)
+
+### Security Considerations
+- **Public Access**: Dashboard accessible without authentication for monitoring
+- **API Security**: `/api/embed-status` endpoints remain secure
+- **No Sensitive Data**: Only displays processing metrics, no credentials or secrets
+
+### Deployment Notes
+- **Static Assets**: CSS and JS files served from `/static/` directory
+- **Template Location**: Thymeleaf templates in `/templates/` directory
+- **Cloud Foundry**: Compatible with existing deployment configuration
+- **Build Process**: No additional build steps required
+
+### Usage
+- **URL**: `https://your-app-domain/embed-status`
+- **Refresh**: Automatic every 30 seconds, manual via button
+- **Clear Cache**: Manual cache clearing with confirmation dialog
+- **Monitoring**: Real-time view of embedProc processing status
+- **Troubleshooting**: Visual indicators for stuck or failed instances
+- **Notifications**: Success/error feedback for user actions
+
 ## RAG Mode Improvements (Previous Update)
 
 ### RAG Only Mode Improvements (Latest Update)

@@ -15,6 +15,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
+import java.util.Map;
 
 /**
  * Service for monitoring embedProc instances via RabbitMQ.
@@ -43,12 +44,16 @@ public class EmbedProcMonitoringService {
      * Automatically consumes messages from the configured queue.
      */
     @RabbitListener(queues = "${app.monitoring.rabbitmq.queue-name:embedproc.metrics}")
-    public void handleEmbedProcMetrics(String message) {
+    public void handleEmbedProcMetrics(org.springframework.amqp.core.Message message) {
         try {
-            logger.debug("Received embedProc metrics message: {}", message);
+            logger.debug("Received embedProc metrics message: {}", new String(message.getBody()));
+            
+            // Handle SCDF message format - extract payload from Spring Cloud Stream envelope
+            String payload = extractPayloadFromSCDFMessage(message);
+            logger.debug("Extracted payload: {}", payload);
             
             // Parse the JSON message into EmbedProcMetrics
-            EmbedProcMetrics metrics = objectMapper.readValue(message, EmbedProcMetrics.class);
+            EmbedProcMetrics metrics = objectMapper.readValue(payload, EmbedProcMetrics.class);
             
             // Update the cache with latest metrics
             instanceMetricsCache.put(metrics.getInstanceId(), metrics);
@@ -61,7 +66,41 @@ public class EmbedProcMonitoringService {
                        metrics.getProcessingRate());
             
         } catch (Exception e) {
-            logger.error("Failed to process embedProc metrics message: {}", message, e);
+            logger.error("Failed to process embedProc metrics message: {}", 
+                        message != null ? new String(message.getBody()) : "null", e);
+        }
+    }
+    
+    /**
+     * Extract the actual payload from a Spring Cloud Data Flow message.
+     * SCDF messages are typically wrapped in a Spring Cloud Stream envelope.
+     */
+    private String extractPayloadFromSCDFMessage(org.springframework.amqp.core.Message message) {
+        String rawMessage = new String(message.getBody());
+        logger.debug("Raw message: {}", rawMessage);
+        
+        try {
+            // Try to parse as SCDF envelope first
+            if (rawMessage.contains("\"payload\"")) {
+                // This is likely a Spring Cloud Stream envelope
+                Map<String, Object> envelope = objectMapper.readValue(rawMessage, Map.class);
+                Object payload = envelope.get("payload");
+                
+                if (payload instanceof String) {
+                    return (String) payload;
+                } else if (payload instanceof Map) {
+                    // If payload is already an object, convert it back to JSON
+                    return objectMapper.writeValueAsString(payload);
+                }
+            }
+            
+            // If no envelope detected, assume it's raw JSON
+            return rawMessage;
+            
+        } catch (Exception e) {
+            logger.error("Failed to extract payload from SCDF message: {}", rawMessage, e);
+            // Fallback to raw message
+            return rawMessage;
         }
     }
     

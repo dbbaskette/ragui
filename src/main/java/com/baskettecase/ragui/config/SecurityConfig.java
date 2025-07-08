@@ -29,6 +29,7 @@ public class SecurityConfig {
                         .requestMatchers("/*.css", "/*.js", "/*.png", "/*.jpg", "/*.ico").permitAll()
                         .requestMatchers("/api/**").permitAll() // Keep API endpoints accessible
                         .requestMatchers("/actuator/**").permitAll() // Keep actuator accessible
+                        .requestMatchers("/embed-status").permitAll() // Allow embed status dashboard
                         .anyRequest().authenticated()) // Require authentication for other pages
                 .formLogin(form -> form.permitAll()) // Enable form login
                 .csrf(csrf -> csrf.disable()) // Keep CSRF disabled for API calls

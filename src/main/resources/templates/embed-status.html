@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Embed Status Dashboard</title>
+    <link rel="stylesheet" th:href="@{/embed-status.css}" />
+</head>
+<body>
+    <div class="dashboard-container">
+        <header class="dashboard-header">
+            <h1>Embed Status Dashboard</h1>
+            <div class="header-controls">
+                <button id="refreshBtn" class="refresh-btn">
+                    <span class="refresh-icon">↻</span>
+                    Refresh
+                </button>
+                <button id="clearBtn" class="clear-btn">
+                    <span class="clear-icon">🗑️</span>
+                    Clear Cache
+                </button>
+                <div class="last-updated">
+                    Last updated: <span id="lastUpdated">-</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="summary-cards">
+            <div class="summary-card">
+                <div class="card-icon">📊</div>
+                <div class="card-content">
+                    <h3>Total Instances</h3>
+                    <div class="card-value" id="totalInstances" th:text="${hasData ? initialData.summary.totalInstances : '-'}">-</div>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon">🟢</div>
+                <div class="card-content">
+                    <h3>Active Instances</h3>
+                    <div class="card-value" id="activeInstances" th:text="${hasData ? initialData.summary.activeInstances : '-'}">-</div>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon">⚡</div>
+                <div class="card-content">
+                    <h3>Processing Rate</h3>
+                    <div class="card-value" id="avgProcessingRate" th:text="${hasData and initialData.summary.averageProcessingRate != null ? #numbers.formatDecimal(initialData.summary.averageProcessingRate, 1, 2) + '/s' : '0.00/s'}">-</div>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon">📦</div>
+                <div class="card-content">
+                    <h3>Total Chunks</h3>
+                    <div class="card-value" id="totalChunks" th:text="${hasData ? initialData.summary.totalProcessedChunks : '-'}">-</div>
+                </div>
+            </div>
+            <div class="summary-card">
+                <div class="card-icon">❌</div>
+                <div class="card-content">
+                    <h3>Errors</h3>
+                    <div class="card-value" id="totalErrors" th:text="${hasData ? initialData.summary.totalErrorCount : '-'}">-</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="instances-section">
+            <h2>Instance Details</h2>
+            <div class="instances-grid" id="instancesGrid">
+                <!-- Server-side rendered instances -->
+                <div th:if="${hasData and initialData.instances != null and !initialData.instances.empty}" 
+                     th:each="instance : ${initialData.instances}" 
+                     class="instance-card">
+                    <div class="instance-header">
+                        <div class="instance-id" th:text="${instance.instanceId}">Instance ID</div>
+                        <div class="status-badge" th:classappend="${instance.status != null ? (instance.status.toLowerCase().contains('active') or instance.status.toLowerCase().contains('running') ? 'active' : instance.status.toLowerCase().contains('idle') or instance.status.toLowerCase().contains('waiting') ? 'idle' : instance.status.toLowerCase().contains('error') or instance.status.toLowerCase().contains('failed') ? 'error' : 'offline') : 'offline'}" 
+                             th:text="${instance.status != null ? instance.status : 'unknown'}">Status</div>
+                    </div>
+                    
+                    <div class="instance-metrics">
+                        <div class="metric-item">
+                            <div class="metric-label">Processed</div>
+                            <div class="metric-value" th:text="${instance.processedChunks != null ? instance.processedChunks : 0}">0</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Total</div>
+                            <div class="metric-value" th:text="${instance.totalChunks != null ? instance.totalChunks : 0}">0</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Rate</div>
+                            <div class="metric-value" th:text="${instance.processingRate != null ? #numbers.formatDecimal(instance.processingRate, 1, 2) + '/s' : '0.00/s'}">0.00/s</div>
+                        </div>
+                        <div class="metric-item">
+                            <div class="metric-label">Errors</div>
+                            <div class="metric-value" th:text="${instance.errorCount != null ? instance.errorCount : 0}">0</div>
+                        </div>
+                    </div>
+                    
+                    <div class="progress-section">
+                        <div class="progress-label">
+                            <span>Progress</span>
+                            <span th:text="${instance.progressPercentage != null ? #numbers.formatDecimal(instance.progressPercentage, 1, 1) + '%' : '0.0%'}">0.0%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" th:style="'width: ' + ${instance.progressPercentage != null ? instance.progressPercentage : 0} + '%'"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="instance-footer">
+                        <div class="uptime" th:text="'Uptime: ' + ${instance.uptime != null ? instance.uptime : 'N/A'}">Uptime: N/A</div>
+                        <div class="last-updated-time" th:text="'Updated: ' + ${instance.lastUpdated != null ? #dates.format(instance.lastUpdated, 'HH:mm:ss') : 'N/A'}">Updated: N/A</div>
+                    </div>
+                </div>
+                
+                <!-- Loading state when no server-side data -->
+                <div th:if="${!hasData}" class="loading">Loading instances...</div>
+                
+                <!-- Error state -->
+                <div th:if="${hasData and (initialData.instances == null or initialData.instances.empty)}" class="loading">No instances found</div>
+            </div>
+        </div>
+
+        <div class="status-legend">
+            <h3>Status Legend</h3>
+            <div class="legend-items">
+                <div class="legend-item">
+                    <span class="status-indicator active"></span>
+                    <span>Active</span>
+                </div>
+                <div class="legend-item">
+                    <span class="status-indicator idle"></span>
+                    <span>Idle</span>
+                </div>
+                <div class="legend-item">
+                    <span class="status-indicator error"></span>
+                    <span>Error</span>
+                </div>
+                <div class="legend-item">
+                    <span class="status-indicator offline"></span>
+                    <span>Offline</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script th:src="@{/embed-status.js}"></script>
+</body>
+</html> 
