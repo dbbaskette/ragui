@@ -98,7 +98,7 @@ public class RagService implements DisposableBean {
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete in your response.")
+                            .system("You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**'.")
                             .user(request.getMessage())
                             .call()
                             .content();
@@ -115,7 +115,7 @@ public class RagService implements DisposableBean {
                 
                 // Extract clean answer and simulate streaming
                 String cleanAnswer = extractAnswer(llmResponse);
-                String responseWithMode = cleanAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**";
+                                    String responseWithMode = cleanAnswer;
                 if (statusListener != null) statusListener.onStatus("Streaming clean response", 90);
                 simulateStreamingResponse(responseWithMode, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
@@ -151,7 +151,7 @@ public class RagService implements DisposableBean {
                 String contextText = formatDocumentsToContext(docs);
 
                 // Use token-aware prompt validation
-                String systemPrompt = "You are a helpful AI assistant. Use the provided context and your knowledge to answer the user's question directly and clearly.";
+                String systemPrompt = "You are a helpful AI assistant. Use the provided context and expand on it using your vast knowledge to answer the question thoroughly with supporting information. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**'.";
                 
                 String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
                 
@@ -168,7 +168,7 @@ public class RagService implements DisposableBean {
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("You are a helpful AI assistant. Use the provided context and your knowledge to answer the user's question directly and clearly.")
+                            .system("You are a helpful AI assistant. Use the provided context and expand on it using your vast knowledge to answer the question thoroughly with supporting information. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**'.")
                             .user(llmPrompt)
                             .call()
                             .content();
@@ -185,7 +185,7 @@ public class RagService implements DisposableBean {
                 
                 // Extract clean answer and simulate streaming
                 String cleanAnswer = extractAnswer(llmResponse);
-                String responseWithMode = cleanAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
+                String responseWithMode = cleanAnswer;
                 if (statusListener != null) statusListener.onStatus("Streaming clean response", 90);
                 simulateStreamingResponse(responseWithMode, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
@@ -237,7 +237,7 @@ public class RagService implements DisposableBean {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to analyze context (non-streaming for clean output)", 70);
                     
                     // Use token-aware prompt validation for RAG Only mode
-                    String systemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. If the information doesn't contain enough details, simply state that the information is not available.";
+                    String systemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. Restate the information in a clear and concise answer. If the information doesn't contain enough details, simply state that the information is not available. IMPORTANT: You MUST end your response with exactly: **<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
                     
                     String basePrompt = validateAndAdjustPrompt(contextText, cleanedPrompt, systemPrompt);
                     
@@ -255,7 +255,7 @@ public class RagService implements DisposableBean {
                     try {
                         // Use non-streaming to get complete response, then clean it
                         String fullResponse = CompletableFuture.supplyAsync(() -> {
-                            String ragOnlySystemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. If the information doesn't contain enough details, simply state that the information is not available.";
+                            String ragOnlySystemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. Restate the information in a clear and concise answer. If the information doesn't contain enough details, simply state that the information is not available. IMPORTANT: You MUST end your response with exactly: **<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
                             
                             return chatClient.prompt()
                                 .system(ragOnlySystemPrompt)
@@ -269,11 +269,8 @@ public class RagService implements DisposableBean {
                         String cleanedResponse = extractAnswer(fullResponse);
                         logger.info("RAG Only cleaned response: {}", cleanedResponse);
                         
-                        // Add mode information to the response
-                        String responseWithMode = cleanedResponse + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
-                        
                         // Simulate streaming to maintain consistent UX with other modes
-                        simulateStreamingResponse(responseWithMode, chunkConsumer);
+                        simulateStreamingResponse(cleanedResponse, chunkConsumer);
                         if (statusListener != null) statusListener.onStatus("COMPLETED", 100);
                         
                     } catch (TimeoutException te) {
@@ -288,7 +285,7 @@ public class RagService implements DisposableBean {
                 } else {
                     logger.info("No context found for RAG Only stream. Completing.");
                     if (statusListener != null) statusListener.onStatus("No context found, stream complete", 90);
-                    chunkConsumer.accept("I couldn't find relevant information in the knowledge base to answer your question.\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**");
+                    chunkConsumer.accept("I couldn't find relevant information in the knowledge base to answer your question. (RAG Only)");
                     if (statusListener != null) statusListener.onStatus("COMPLETED", 100);
                 }
             }
@@ -316,7 +313,7 @@ public class RagService implements DisposableBean {
             if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
                 String llmAnswer = CompletableFuture.supplyAsync(() -> {
-                    String pureLlmSystemPrompt = "You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge.";
+                    String pureLlmSystemPrompt = "You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**'.";
                     
                     return chatClient.prompt()
                         .system(pureLlmSystemPrompt)
@@ -324,7 +321,7 @@ public class RagService implements DisposableBean {
                 }, this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = "LLM Answer:\n" + llmAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**";
+                answer = "LLM Answer:\n" + llmAnswer;
                 source = "LLM";
 
             } else if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
@@ -344,11 +341,11 @@ public class RagService implements DisposableBean {
                 
                 if (statusListener != null) statusListener.onStatus("Calling LLM with prompt", 70);
                 String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .system("You are a helpful AI assistant. Use the provided context and your knowledge to answer the user's question directly and clearly.")
+                    .system("You are a helpful AI assistant. Use the provided context and expand on it using your vast knowledge to answer the question thoroughly with supporting information. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**'.")
                     .user(llmPrompt).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = llmAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
+                answer = llmAnswer;
                 source = "LLM_FALLBACK";
 
             } else { // RAG Only
@@ -380,14 +377,14 @@ public class RagService implements DisposableBean {
                         llmSummaryPrompt = llmSummaryPromptBase;
                     }
                     String llmSummary = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                                                        .system("You are a helpful AI assistant. Answer the user's question using ONLY the information provided. If the information doesn't contain enough details, simply state that the information is not available.")
+                                                        .system("You are a helpful AI assistant. Answer the user's question using ONLY the information provided. Restate the information in a clear and concise answer. If the information doesn't contain enough details, simply state that the information is not available. IMPORTANT: You MUST end your response with exactly: **<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**")
                         .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
                         .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                    answer = llmSummary + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
+                    answer = llmSummary;
                     source = "RAG";
                 } else {
-                    answer = "I couldn't find relevant information in the knowledge base to answer your question.\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
+                    answer = "I couldn't find relevant information in the knowledge base to answer your question. (RAG Only)";
                     source = "RAG_NO_CONTEXT";
                 }
             }
@@ -793,6 +790,8 @@ public class RagService implements DisposableBean {
             }
         }
     }
+
+
 
 
 

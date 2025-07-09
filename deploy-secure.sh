@@ -1,6 +1,6 @@
 #!/bin/bash
-# deploy.sh - Build and deploy to Cloud Foundry
-# Usage: ./deploy.sh [--skip-build] [--app-name NAME]
+# deploy-secure.sh - Build and deploy to Cloud Foundry with secure credentials
+# Usage: ./deploy-secure.sh [--skip-build] [--app-name NAME]
 
 set -e
 
@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
       echo "  -h, --help          Show this help message"
       echo ""
       echo "Examples:"
-      echo "  $0                       # Build and deploy"
+      echo "  $0                       # Build and deploy with secure credentials"
       echo "  $0 --skip-build          # Deploy existing JAR"
       echo "  $0 --app-name ragui-prod # Deploy to different app name"
       exit 0
@@ -48,8 +48,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo -e "${BLUE}🚀 RAG UI Deployment Script${NC}"
-echo "================================"
+echo -e "${BLUE}🚀 RAG UI Secure Deployment Script${NC}"
+echo "=========================================="
 
 # 1. Verify we're in the right directory
 if [[ ! -f "pom.xml" ]]; then
@@ -77,22 +77,62 @@ current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline
 
 echo -e "${BLUE}📦 Project: ${main_artifact_id} v${current_version}${NC}"
 
-# 3. Maven build (unless skipped)
+# 3. Handle secure credentials
+echo -e "${BLUE}🔐 Setting up secure credentials...${NC}"
+
+# Check if secure properties file exists
+if [ ! -f "src/main/resources/application-secure.properties" ]; then
+    echo -e "${YELLOW}📝 Creating application-secure.properties from template...${NC}"
+    cp src/main/resources/application-secure.properties.template src/main/resources/application-secure.properties
+    
+    # Set default values if environment variables are not provided
+    if [ -z "$DEFAULT_USERNAME" ]; then
+        echo -e "${YELLOW}⚠️  DEFAULT_USERNAME not set, using default: tanzu${NC}"
+        export DEFAULT_USERNAME=tanzu
+    fi
+    
+    if [ -z "$DEFAULT_PASSWORD" ]; then
+        echo -e "${YELLOW}⚠️  DEFAULT_PASSWORD not set, using default: t@nzu123${NC}"
+        export DEFAULT_PASSWORD=t@nzu123
+    fi
+    
+    # Replace placeholders with actual values
+    sed -i.bak "s/\${DEFAULT_USERNAME:tanzu}/$DEFAULT_USERNAME/g" src/main/resources/application-secure.properties
+    sed -i.bak "s/\${DEFAULT_PASSWORD:t@nzu123}/$DEFAULT_PASSWORD/g" src/main/resources/application-secure.properties
+    
+    # Clean up backup file
+    rm src/main/resources/application-secure.properties.bak
+    
+    echo -e "${GREEN}✅ Secure properties file created with credentials${NC}"
+else
+    echo -e "${GREEN}✅ Secure properties file already exists${NC}"
+fi
+
+# 4. Maven build (unless skipped)
 if [[ "$SKIP_BUILD" == true ]]; then
   echo -e "${YELLOW}⏭️  Skipping Maven build${NC}"
 else
-  echo -e "${BLUE}🔨 Running Maven build...${NC}"
-  mvn clean package -q
+  echo -e "${BLUE}🔨 Running secure build...${NC}"
   
-  if [[ $? -eq 0 ]]; then
-    echo -e "${GREEN}✅ Maven build successful${NC}"
+  # Check if build-secure.sh exists and use it
+  if [[ -f "./build-secure.sh" ]]; then
+    echo -e "${BLUE}📦 Using build-secure.sh for secure build process${NC}"
+    if ! ./build-secure.sh; then
+      echo -e "${RED}❌ Secure build failed!${NC}"
+      exit 1
+    fi
   else
-    echo -e "${RED}❌ Maven build failed${NC}"
-    exit 1
+    echo -e "${YELLOW}⚠️  build-secure.sh not found, using standard Maven build${NC}"
+    if ! ./mvnw clean package -DskipTests; then
+      echo -e "${RED}❌ Maven build failed${NC}"
+      exit 1
+    fi
   fi
+  
+  echo -e "${GREEN}✅ Build successful${NC}"
 fi
 
-# 4. Verify JAR exists
+# 5. Verify JAR exists
 JAR_PATH="target/${main_artifact_id}-${current_version}.jar"
 if [[ ! -f "$JAR_PATH" ]]; then
   echo -e "${RED}❌ Error: JAR file not found at ${JAR_PATH}${NC}"
@@ -102,14 +142,14 @@ fi
 
 echo -e "${GREEN}📦 JAR ready: ${JAR_PATH}${NC}"
 
-# 5. Check if cf CLI is available
+# 6. Check if cf CLI is available
 if ! command -v cf &> /dev/null; then
   echo -e "${RED}❌ Error: Cloud Foundry CLI (cf) not found${NC}"
   echo -e "${YELLOW}💡 Please install CF CLI: https://docs.cloudfoundry.org/cf-cli/install-go-cli.html${NC}"
   exit 1
 fi
 
-# 6. Check if logged into CF
+# 7. Check if logged into CF
 if ! cf target &> /dev/null; then
   echo -e "${RED}❌ Error: Not logged into Cloud Foundry${NC}"
   echo -e "${YELLOW}💡 Please run: cf login${NC}"
@@ -120,13 +160,13 @@ fi
 cf_target=$(cf target 2>/dev/null | grep -E "(API endpoint|org|space)" | tr '\n' ' ')
 echo -e "${BLUE}🎯 CF Target: ${cf_target}${NC}"
 
-# 7. Update manifest.yml with correct JAR path
+# 8. Update manifest.yml with correct JAR path
 echo -e "${BLUE}📝 Updating manifest.yml with correct JAR path...${NC}"
 sed -i.bak "s|path: target/.*\.jar|path: ${JAR_PATH}|" manifest.yml
 rm manifest.yml.bak
 echo -e "${GREEN}✅ Manifest updated: ${JAR_PATH}${NC}"
 
-# 8. Deploy to Cloud Foundry
+# 9. Deploy to Cloud Foundry
 echo -e "${BLUE}☁️  Deploying to Cloud Foundry...${NC}"
 
 if [[ -n "$APP_NAME" ]]; then

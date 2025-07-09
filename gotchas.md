@@ -20,10 +20,11 @@
 - **Issue**: LLM responses getting truncated due to token limits
 - **Solution**: Token-aware context management with character-based estimation
 - **Configuration**: 
-  - `ragui.token.max-total-tokens=8000`
-  - `ragui.token.max-context-tokens=3000`
-  - `ragui.token.max-response-tokens=2000`
+  - `ragui.token.max-total-tokens=16000`
+  - `ragui.token.max-context-tokens=6000`
+  - `ragui.token.max-response-tokens=6000`
 - **Note**: Uses 1 token ≈ 4 characters approximation
+- **Recent Fix**: Increased token limits to prevent truncation in Pure LLM and RAG + LLM Fallback modes
 
 ### Context Size Balancing
 - **Issue**: Too much context leaves no room for response

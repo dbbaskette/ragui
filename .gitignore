@@ -3,3 +3,8 @@ target/
 src/main/resources/static/version.js
 manifest.tmp
 
+# Secure credentials - do not track
+src/main/resources/application-secure.properties
+
+release.sh
+.release-exec
