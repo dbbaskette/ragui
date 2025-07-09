@@ -93,15 +93,13 @@ public class RagService implements DisposableBean {
                 logger.debug("Using Pure LLM mode for stream: {}", request.getMessage());
                 logger.info("[{}] LLM (Pure) call started", Instant.now());
                 
-                // Use non-streaming call with structured prompting for quality
+                // Use non-streaming call with direct prompting for quality
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("Think briefly about your response in a <thinking> block (2-3 sentences max). " +
-                                   "Then provide your complete final answer in an <answer> block. " +
-                                   "Keep thinking concise to leave room for a full answer. " +
-                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>")
+                            .system("Provide a clear, direct answer to the user's question. " +
+                                   "Be comprehensive and complete in your response.")
                             .user(request.getMessage())
                             .call()
                             .content();
@@ -153,10 +151,10 @@ public class RagService implements DisposableBean {
                 String contextText = formatDocumentsToContext(docs);
 
                 // Use token-aware prompt validation
-                String systemPrompt = "Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
-                                   "Then provide your complete final answer in an <answer> block. " +
-                                   "Keep thinking concise to leave room for a full answer. " +
-                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>";
+                String systemPrompt = "Answer the question using the provided context and your own knowledge. " +
+                                   "If the context contains relevant information, use it. " +
+                                   "If the context doesn't contain the answer, use your general knowledge. " +
+                                   "Provide a comprehensive answer that combines both sources of information.";
                 
                 String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
                 
@@ -168,15 +166,15 @@ public class RagService implements DisposableBean {
                 logger.debug("LLM Prompt (RAG+Fallback Mode): User: [{}]", llmPrompt);
                 logger.info("[{}] LLM (RAG+Fallback) call started", Instant.now());
 
-                // Use non-streaming call with structured prompting for quality
+                                // Use non-streaming call with direct prompting for quality
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
-                                   "Then provide your complete final answer in an <answer> block. " +
-                                   "Keep thinking concise to leave room for a full answer. " +
-                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>")
+                            .system("Answer the question using the provided context and your own knowledge. " +
+                                    "If the context contains relevant information, use it. " +
+                                    "If the context doesn't contain the answer, use your general knowledge. " +
+                                    "Provide a comprehensive answer that combines both sources of information.")
                             .user(llmPrompt)
                             .call()
                             .content();
@@ -244,11 +242,11 @@ public class RagService implements DisposableBean {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to analyze context (non-streaming for clean output)", 70);
                     
                     // Use token-aware prompt validation for RAG Only mode
-                    String systemPrompt = "Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
-                                        "Then provide your complete final answer in an <answer> block based on the provided context. " +
-                                        "Keep thinking concise to leave room for a full answer. " +
-                                        "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer> " +
-                                        "If the context does not contain the answer, state that clearly inside the <answer> block.";
+                    String systemPrompt = "Answer the question using ONLY the information provided in the context. " +
+                                        "Do not include any reasoning, analysis, or thinking process. " +
+                                        "Provide a direct, factual answer based on the context. " +
+                                        "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
+                                        "Keep your response concise and to the point.";
                     
                     String basePrompt = validateAndAdjustPrompt(contextText, cleanedPrompt, systemPrompt);
                     
@@ -266,18 +264,18 @@ public class RagService implements DisposableBean {
                     try {
                         // Use non-streaming to get complete response, then clean it
                         String fullResponse = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                            .system("Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
-                                    "Then provide your complete final answer in an <answer> block based on the provided context. " +
-                                    "Keep thinking concise to leave room for a full answer. " +
-                                    "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer> " +
-                                    "If the context does not contain the answer, state that clearly inside the <answer> block.")
+                            .system("Answer the question using ONLY the information provided in the context. " +
+                                    "Do not include any reasoning, analysis, or thinking process. " +
+                                    "Provide a direct, factual answer based on the context. " +
+                                    "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
+                                    "Keep your response concise and to the point.")
                             .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
                             .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                         
                         logger.info("[{}] LLM (RAG Only Non-Streaming) call finished", Instant.now());
                         
                         // Clean the response to remove any reasoning that slipped through
-                        String cleanedResponse = extractAnswer(fullResponse);
+                        String cleanedResponse = extractAnswer(fullResponse, true); // true for RAG Only mode
                         logger.info("RAG Only cleaned response: {}", cleanedResponse);
                         
                         // Simulate streaming to maintain consistent UX with other modes
@@ -324,7 +322,7 @@ public class RagService implements DisposableBean {
             if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
                 String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .system("Answer directly and concisely. Do not explain your reasoning or thought process.")
+                    .system("Provide a clear, direct answer to the user's question. Be comprehensive and complete.")
                     .user(request.getMessage()).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
@@ -341,7 +339,10 @@ public class RagService implements DisposableBean {
                 String contextText = formatDocumentsToContext(docs);
                 
                 // Use token-aware prompt validation
-                String systemPrompt = "Answer the user's question based on the provided context. If the context doesn't contain the answer, use your general knowledge.";
+                String systemPrompt = "Answer the question using the provided context and your own knowledge. " +
+                                    "If the context contains relevant information, use it. " +
+                                    "If the context doesn't contain the answer, use your general knowledge. " +
+                                    "Provide a comprehensive answer that combines both sources of information.";
                 String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
                 String sourceCode = (contextText != null && !contextText.isEmpty()) ? "RAG context + LLM" : "LLM only (no context found)";
                 
@@ -951,64 +952,134 @@ public class RagService implements DisposableBean {
 
     /**
      * Extracts the content from the <answer> tag in the LLM's response.
+     * More robust extraction that handles various response formats.
      */
     private String extractAnswer(String llmResponse) {
+        return extractAnswer(llmResponse, false);
+    }
+
+    /**
+     * Extracts the content from the <answer> tag in the LLM's response.
+     * More robust extraction that handles various response formats.
+     * @param isRagOnly If true, applies stricter filtering for RAG Only mode
+     */
+    private String extractAnswer(String llmResponse, boolean isRagOnly) {
         if (llmResponse == null || llmResponse.trim().isEmpty()) {
             return "The provided context does not contain information to answer this question.";
         }
         
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("<answer>(.*?)</answer>", java.util.regex.Pattern.DOTALL);
-        java.util.regex.Matcher matcher = pattern.matcher(llmResponse);
+        String response = llmResponse.trim();
+        logger.info("Processing LLM response for answer extraction. Length: {}", response.length());
         
-        if (matcher.find()) {
-            String answer = matcher.group(1).trim();
-            logger.info("Extracted answer: {}", answer);
+        // First, try to extract from <answer> tags
+        java.util.regex.Pattern answerPattern = java.util.regex.Pattern.compile("<answer>(.*?)</answer>", java.util.regex.Pattern.DOTALL);
+        java.util.regex.Matcher answerMatcher = answerPattern.matcher(response);
+        
+        if (answerMatcher.find()) {
+            String answer = answerMatcher.group(1).trim();
+            logger.info("Successfully extracted answer from <answer> tags: {}", answer.substring(0, Math.min(100, answer.length())));
             return answer;
         }
         
-        logger.warn("Could not find <answer> tag in LLM response. Raw response: {}", llmResponse);
-        
-        // Enhanced fallback: Try to find text after </thinking> tag first
-        int thinkingEndIndex = llmResponse.lastIndexOf("</thinking>");
+        // If no <answer> tags, try to find text after </thinking> tag
+        int thinkingEndIndex = response.lastIndexOf("</thinking>");
         if (thinkingEndIndex != -1) {
-            String potentialAnswer = llmResponse.substring(thinkingEndIndex + "</thinking>".length()).trim();
+            String potentialAnswer = response.substring(thinkingEndIndex + "</thinking>".length()).trim();
             if (!potentialAnswer.isEmpty() && potentialAnswer.length() > 10) {
-                logger.warn("Found potential answer after </thinking> tag: {}", potentialAnswer);
+                logger.info("Found potential answer after </thinking> tag: {}", potentialAnswer.substring(0, Math.min(100, potentialAnswer.length())));
                 return potentialAnswer;
             }
         }
         
-        // If no thinking tags, use the raw response but clean it
-        String cleaned = llmResponse.trim();
-        
-        // Remove common thinking patterns if they appear at the start
-        if (cleaned.toLowerCase().startsWith("thinking:") || cleaned.toLowerCase().startsWith("let me think") || 
-            cleaned.toLowerCase().startsWith("okay,") || cleaned.toLowerCase().startsWith("first,")) {
-            
-            // Try to find the actual answer after thinking content
-            String[] lines = cleaned.split("\n");
-            StringBuilder result = new StringBuilder();
-            boolean foundAnswer = false;
-            
-            for (String line : lines) {
-                String lowerLine = line.toLowerCase().trim();
-                // Skip obvious thinking lines
-                if (!lowerLine.startsWith("thinking:") && !lowerLine.startsWith("let me") && 
-                    !lowerLine.startsWith("okay,") && !lowerLine.startsWith("first,") &&
-                    !lowerLine.startsWith("looking") && !lowerLine.contains("i need to") &&
-                    line.trim().length() > 10) {
-                    result.append(line.trim()).append(" ");
-                    foundAnswer = true;
+        // If no structured tags found, check if the response looks like it has thinking content
+        if (response.contains("<thinking>") || response.toLowerCase().contains("thinking:")) {
+            // Try to extract everything after the thinking section
+            String[] parts = response.split("</thinking>");
+            if (parts.length > 1) {
+                String afterThinking = parts[parts.length - 1].trim();
+                if (!afterThinking.isEmpty() && afterThinking.length() > 10) {
+                    logger.info("Extracted answer after thinking section: {}", afterThinking.substring(0, Math.min(100, afterThinking.length())));
+                    return afterThinking;
                 }
-            }
-            
-            if (foundAnswer) {
-                cleaned = result.toString().trim();
             }
         }
         
-        // If still no good answer, return the raw response (better than nothing)
-        return cleaned.isEmpty() ? "Could not extract a clear answer. Please try rephrasing your question." : cleaned;
+        // If the response doesn't have structured tags, it might be a direct answer
+        // Only do minimal cleaning to avoid truncation
+        String cleaned = response;
+        
+        // Remove obvious thinking prefixes if they exist
+        String[] thinkingPrefixes = {
+            "thinking:", "let me think", "okay,", "first,", "looking at this", 
+            "based on the", "according to the", "from the context"
+        };
+        
+        for (String prefix : thinkingPrefixes) {
+            if (cleaned.toLowerCase().startsWith(prefix.toLowerCase())) {
+                // Find the first sentence that doesn't start with a thinking prefix
+                String[] sentences = cleaned.split("(?<=[.!?])\\s+");
+                StringBuilder result = new StringBuilder();
+                boolean foundAnswer = false;
+                
+                for (String sentence : sentences) {
+                    String lowerSentence = sentence.toLowerCase().trim();
+                    boolean isThinkingSentence = false;
+                    
+                    for (String thinkingPrefix : thinkingPrefixes) {
+                        if (lowerSentence.startsWith(thinkingPrefix.toLowerCase())) {
+                            isThinkingSentence = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!isThinkingSentence && sentence.trim().length() > 10) {
+                        result.append(sentence.trim()).append(" ");
+                        foundAnswer = true;
+                    }
+                }
+                
+                if (foundAnswer) {
+                    cleaned = result.toString().trim();
+                    logger.info("Cleaned response by removing thinking prefixes: {}", cleaned.substring(0, Math.min(100, cleaned.length())));
+                    return cleaned;
+                }
+            }
+        }
+        
+        // If we get here, the response might be a direct answer without thinking content
+        // For RAG Only mode, apply stricter filtering
+        if (isRagOnly) {
+            // Remove common reasoning patterns that might have slipped through
+            String ragOnlyCleaned = response;
+            
+            // Remove reasoning patterns
+            String[] reasoningPatterns = {
+                "okay, let's", "first, i'll", "looking at", "let me check", "i need to",
+                "based on the", "according to the", "from the context", "the context says",
+                "wait,", "hmm,", "however,", "therefore,", "alternatively,", "but wait",
+                "that seems", "that might be", "it's possible", "maybe", "perhaps",
+                "in the spider-man", "in the context", "the user's question", "the user mentioned"
+            };
+            
+            for (String pattern : reasoningPatterns) {
+                ragOnlyCleaned = ragOnlyCleaned.replaceAll("(?i)" + pattern + ".*?[.!?]\\s*", "");
+            }
+            
+            // Remove multiple spaces and clean up
+            ragOnlyCleaned = ragOnlyCleaned.replaceAll("\\s{2,}", " ").trim();
+            
+            // If the cleaned response is significantly shorter, use it
+            if (ragOnlyCleaned.length() > 20 && ragOnlyCleaned.length() < response.length() * 0.8) {
+                logger.info("Applied RAG Only filtering. Original: {} chars, Cleaned: {} chars", 
+                           response.length(), ragOnlyCleaned.length());
+                return ragOnlyCleaned;
+            }
+        }
+        
+        // Return it as-is to avoid truncation
+        logger.info("Using raw response as answer (no structured tags or thinking content found): {}", 
+                   response.substring(0, Math.min(100, response.length())));
+        return response;
     }
 
     /**

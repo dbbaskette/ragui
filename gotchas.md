@@ -3,37 +3,32 @@
 ## LLM Response Truncation Issue
 
 ### Problem Description
-**Issue**: LLM responses were getting truncated mid-sentence when the total token count exceeded model limits. This was particularly noticeable when:
-- Large context documents were retrieved from vector search
-- Complex system prompts with structured output were used
-- Multiple documents were included in context
-- The combination of context + question + system prompt + response exceeded token limits
+**Issue**: LLM responses were getting truncated mid-sentence, affecting both Pure LLM and RAG modes. This was not a token limit issue but rather a response processing problem.
 
 **Symptoms**:
 - Responses cut off abruptly mid-sentence
 - Incomplete answers that seemed to stop randomly
 - No error messages, just incomplete responses
-- Particularly problematic with RAG modes that include large context
+- Affected both Pure LLM and RAG modes equally
 
 ### Root Cause
-- No explicit token counting or management in the RAG pipeline
-- Context size was only limited by character count, not token count
-- System prompts with structured output (`<thinking>` and `<answer>` blocks) added overhead
-- No validation of total prompt size before sending to LLM
+- **Structured Prompting Issues**: Complex system prompts with `<thinking>` and `<answer>` blocks were causing the LLM to generate incomplete responses
+- **Aggressive Response Cleaning**: The `extractAnswer()` method was too aggressive in cleaning up responses, potentially truncating valid content
+- **Inconsistent Response Formatting**: LLM wasn't consistently formatting responses with the expected `<answer>` tags
+- **Complex System Prompts**: Overly complex instructions were causing the LLM to generate incomplete responses
 
 ### Solution Implemented
-1. **Token Management Configuration**: Added configurable token limits
-2. **Token Estimation**: Implemented rough token counting (1 token ≈ 4 characters)
-3. **Token-Aware Context Formatting**: Enhanced context formatting to respect token limits
-4. **Prompt Validation**: Added automatic prompt size validation and adjustment
-5. **Comprehensive Logging**: Added detailed token usage logging for monitoring
+1. **Simplified System Prompts**: Replaced complex structured prompting with direct, clear instructions
+2. **Robust Answer Extraction**: Enhanced `extractAnswer()` method to handle various response formats gracefully
+3. **Improved Logging**: Added comprehensive logging for response processing and debugging
+4. **Token Management**: Maintained token management as secondary protection against actual token limits
 
 ### Prevention Strategies
-- Always validate total token count before LLM calls
-- Use token-aware context truncation when limits are exceeded
-- Monitor token usage in logs for optimization opportunities
-- Configure appropriate token limits based on model capabilities
-- Consider response token reservation when calculating context limits
+- Use simple, direct system prompts instead of complex structured instructions
+- Implement robust response extraction with multiple fallback strategies
+- Monitor response processing logs for extraction method used
+- Test with various response formats to ensure robustness
+- Keep system prompts concise and clear to avoid incomplete responses
 
 ### Configuration
 ```properties

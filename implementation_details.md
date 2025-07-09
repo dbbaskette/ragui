@@ -279,60 +279,57 @@ Created a modern, responsive web dashboard for monitoring embedProc instances at
 - **Troubleshooting**: Visual indicators for stuck or failed instances
 - **Notifications**: Success/error feedback for user actions
 
-## Token Management & LLM Truncation Prevention (Latest Update)
+## LLM Response Truncation Fix (Latest Update)
 
 ### Problem Identified
-**Issue**: LLM responses were getting truncated when the total token count (context + user question + system prompt + response) exceeded the model's token limits. This was particularly problematic when:
-- Large context documents were retrieved
-- Complex system prompts were used
-- Structured prompting with `<thinking>` and `<answer>` blocks added overhead
-- No explicit token counting or management existed
+**Issue**: LLM responses were getting truncated mid-sentence, affecting both Pure LLM and RAG modes. The problem was not token limits but rather:
+
+1. **Structured Prompting Issues**: Complex system prompts with `<thinking>` and `<answer>` blocks were causing the LLM to generate incomplete responses
+2. **Aggressive Response Cleaning**: The `extractAnswer()` method was too aggressive in cleaning up responses, potentially truncating valid content
+3. **Inconsistent Response Formatting**: LLM wasn't consistently formatting responses with the expected `<answer>` tags
+
+### Root Cause Analysis
+The truncation was happening in the response processing pipeline, not in the token management:
+- LLM was generating responses that didn't match the expected structured format
+- `extractAnswer()` method was falling back to aggressive cleaning when tags weren't found
+- Complex system prompts were causing the LLM to generate incomplete responses
 
 ### Solution Implemented
 
-#### 1. Token Management Configuration
-Added configurable token limits to prevent truncation:
-```properties
-# Token Management - Prevent LLM truncation
-ragui.token.max-total-tokens=8000
-ragui.token.max-context-tokens=3000
-ragui.token.max-response-tokens=2000
-```
+#### 1. Simplified System Prompts
+Replaced complex structured prompting with direct, clear instructions:
+- **Pure LLM**: "Provide a clear, direct answer to the user's question. Be comprehensive and complete."
+- **RAG + LLM Fallback**: "Answer the question using the provided context and your own knowledge. If the context contains relevant information, use it. If the context doesn't contain the answer, use your general knowledge. Provide a comprehensive answer that combines both sources of information."
+- **RAG Only**: "Answer the question using ONLY the information provided in the context. Do not include any reasoning, analysis, or thinking process. Provide a direct, factual answer based on the context. If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' Keep your response concise and to the point."
 
-#### 2. Token Estimation Utility
-Added `estimateTokens()` method for rough token counting:
-- Uses approximation: 1 token ≈ 4 characters
-- Provides real-time token estimation for all prompt components
-- Logs token usage for monitoring and debugging
+#### 2. Robust Answer Extraction
+Enhanced `extractAnswer()` method to handle various response formats:
+- **Primary**: Extract from `<answer>` tags if present
+- **Secondary**: Extract text after `</thinking>` tags
+- **Tertiary**: Handle responses with thinking prefixes
+- **Fallback**: Return raw response if no structured content found
 
-#### 3. Token-Aware Context Formatting
-Enhanced `formatDocumentsToContext()` to respect both character and token limits:
-- Checks both `maxContextChars` and `maxContextTokens`
-- Truncates documents intelligently when limits are exceeded
-- Provides detailed logging of token usage per document
+#### 3. Improved Logging
+Added comprehensive logging for response processing:
+- Logs response length and extraction method used
+- Shows first 100 characters of extracted answers for debugging
+- Tracks which extraction strategy was successful
 
-#### 4. Prompt Validation System
-Added `validateAndAdjustPrompt()` method that:
-- Estimates tokens for context, question, and system prompt
-- Reserves tokens for response and formatting overhead
-- Automatically truncates context when total tokens exceed limits
-- Falls back to question-only mode if context is too large
-
-#### 5. Integration Across All Modes
-Updated all RAG modes to use token validation:
-- **RAG + LLM Fallback**: Uses token-aware prompt construction
-- **RAG Only**: Validates prompts before LLM calls
-- **Non-streaming chat**: Applies same token management
+#### 4. Token Management (Still Implemented)
+Maintained token management as a secondary protection:
+- Configurable token limits for context and responses
+- Token-aware context formatting
+- Prompt validation to prevent token overflow
 
 ### Benefits Achieved
-- **No More Truncation**: Responses complete fully within token limits
-- **Intelligent Context Management**: Automatically adjusts context size based on token availability
-- **Better Resource Utilization**: Maximizes context usage while staying within limits
-- **Consistent Behavior**: All modes now handle token limits uniformly
-- **Detailed Monitoring**: Comprehensive logging of token usage for optimization
+- **No More Truncation**: Responses complete fully without mid-sentence cuts
+- **Robust Response Handling**: Handles various LLM response formats gracefully
+- **Simplified Prompting**: Direct, clear instructions reduce response complexity
+- **Better Error Recovery**: Multiple fallback strategies for answer extraction
+- **Detailed Monitoring**: Comprehensive logging for debugging response processing
 
 ### Configuration Options
-- `ragui.token.max-total-tokens`: Maximum total tokens for entire prompt
+- `ragui.token.max-total-tokens`: Maximum total tokens for entire prompt (secondary protection)
 - `ragui.token.max-context-tokens`: Maximum tokens allowed for context
 - `ragui.token.max-response-tokens`: Reserved tokens for LLM response
 - `ragui.context.max-chars`: Character limit (legacy, now secondary to token limits)
