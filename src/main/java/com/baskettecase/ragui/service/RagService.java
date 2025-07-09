@@ -793,14 +793,32 @@ public class RagService implements DisposableBean {
 
 
     /**
-     * Simple answer extraction - just return the response as-is
+     * Extract the final answer from LLM response, handling Qwen3 thinking mode
      */
     private String extractAnswer(String llmResponse) {
         if (llmResponse == null || llmResponse.trim().isEmpty()) {
             return "The provided context does not contain information to answer this question.";
         }
         
-        return llmResponse.trim();
+        String response = llmResponse.trim();
+        
+        // Handle Qwen3 thinking mode - extract content after <think>...</think> blocks
+        if (response.contains("<think>")) {
+            // Find the last </think> tag
+            int lastThinkEnd = response.lastIndexOf("</think>");
+            if (lastThinkEnd != -1) {
+                // Extract everything after the last </think> tag
+                String afterThinking = response.substring(lastThinkEnd + "</think>".length()).trim();
+                if (!afterThinking.isEmpty()) {
+                    logger.info("Extracted answer after Qwen3 thinking block: {}", 
+                               afterThinking.substring(0, Math.min(100, afterThinking.length())));
+                    return afterThinking;
+                }
+            }
+        }
+        
+        // If no thinking tags found, return the response as-is
+        return response;
     }
 
     /**
