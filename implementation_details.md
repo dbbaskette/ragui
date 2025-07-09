@@ -302,6 +302,8 @@ Replaced complex structured prompting with direct, clear instructions:
 - **RAG + LLM Fallback**: "Answer the question using the provided context and your own knowledge. If the context contains relevant information, use it. If the context doesn't contain the answer, use your general knowledge. Provide a comprehensive answer that combines both sources of information."
 - **RAG Only**: "Answer the question using ONLY the information provided in the context. Do not include any reasoning, analysis, or thinking process. Provide a direct, factual answer based on the context. If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' Keep your response concise and to the point."
 
+**Qwen Model Integration**: Added `/no_think` directive to all system prompts when reasoning is disabled to properly control the Qwen3-30B-A3B model's thinking behavior.
+
 #### 2. Robust Answer Extraction
 Enhanced `extractAnswer()` method to handle various response formats:
 - **Primary**: Extract from `<answer>` tags if present

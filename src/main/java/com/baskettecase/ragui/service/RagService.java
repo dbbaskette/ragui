@@ -100,9 +100,9 @@ public class RagService implements DisposableBean {
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
-                        String systemPrompt = enableReasoning ? 
-                            "Provide a clear, direct answer to the user's question. Be comprehensive and complete in your response." :
-                            "Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete in your response.";
+                                            String systemPrompt = enableReasoning ? 
+                        "Provide a clear, direct answer to the user's question. Be comprehensive and complete in your response." :
+                        "/no_think Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete in your response.";
                         
                         return chatClient.prompt()
                             .system(systemPrompt)
@@ -162,7 +162,7 @@ public class RagService implements DisposableBean {
                     "If the context contains relevant information, use it. " +
                     "If the context doesn't contain the answer, use your general knowledge. " +
                     "Provide a comprehensive answer that combines both sources of information." :
-                    "Answer the question using the provided context and your own knowledge. " +
+                    "/no_think Answer the question using the provided context and your own knowledge. " +
                     "If the context contains relevant information, use it. " +
                     "If the context doesn't contain the answer, use your general knowledge. " +
                     "Provide a comprehensive answer that combines both sources of information. " +
@@ -187,7 +187,7 @@ public class RagService implements DisposableBean {
                             "If the context contains relevant information, use it. " +
                             "If the context doesn't contain the answer, use your general knowledge. " +
                             "Provide a comprehensive answer that combines both sources of information." :
-                            "Answer the question using the provided context and your own knowledge. " +
+                            "/no_think Answer the question using the provided context and your own knowledge. " +
                             "If the context contains relevant information, use it. " +
                             "If the context doesn't contain the answer, use your general knowledge. " +
                             "Provide a comprehensive answer that combines both sources of information. " +
@@ -288,7 +288,7 @@ public class RagService implements DisposableBean {
                                 "Answer the question using ONLY the information provided in the context. " +
                                 "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
                                 "Keep your response concise and to the point." :
-                                "Answer the question using ONLY the information provided in the context. " +
+                                "/no_think Answer the question using ONLY the information provided in the context. " +
                                 "Do not include any reasoning, analysis, or thinking process. " +
                                 "Provide a direct, factual answer based on the context. " +
                                 "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
@@ -352,7 +352,7 @@ public class RagService implements DisposableBean {
                 String llmAnswer = CompletableFuture.supplyAsync(() -> {
                     String pureLlmSystemPrompt = enableReasoning ? 
                         "Provide a clear, direct answer to the user's question. Be comprehensive and complete." :
-                        "Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete.";
+                        "/no_think Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete.";
                     
                     return chatClient.prompt()
                         .system(pureLlmSystemPrompt)
@@ -1000,8 +1000,11 @@ public class RagService implements DisposableBean {
     private String extractAnswer(String llmResponse, boolean isRagOnly) {
         // If reasoning is enabled globally, skip filtering
         if (enableReasoning) {
+            logger.info("Reasoning enabled globally, returning raw response");
             return llmResponse;
         }
+        
+        logger.info("Reasoning disabled, applying filtering. Response length: {}", llmResponse.length());
         if (llmResponse == null || llmResponse.trim().isEmpty()) {
             return "The provided context does not contain information to answer this question.";
         }
@@ -1087,6 +1090,7 @@ public class RagService implements DisposableBean {
         // If we get here, the response might be a direct answer without thinking content
         // For RAG Only mode, apply stricter filtering
         if (isRagOnly) {
+            logger.info("Applying RAG Only filtering to response");
             // Remove common reasoning patterns that might have slipped through
             String ragOnlyCleaned = response;
             
@@ -1100,7 +1104,12 @@ public class RagService implements DisposableBean {
                 "the user is asking", "the context has", "the context contains", "the context includes",
                 "the context mentions", "the context states", "the context clearly", "the context also",
                 "for example,", "another part", "then there's", "so the answer", "but the question",
-                "the direct answer", "the main one", "the answer should be", "the answer is"
+                "the direct answer", "the main one", "the answer should be", "the answer is",
+                "okay, so", "let me think", "first, i remember", "i should confirm",
+                "the text talks about", "there's some confusion", "the context seems",
+                "but the user is asking", "even though the context", "the answer is there",
+                "i should confirm that", "the main points are", "the context provided",
+                "the context is a bit", "the context is not perfectly clear"
             };
             
             for (String pattern : reasoningPatterns) {
@@ -1134,7 +1143,18 @@ public class RagService implements DisposableBean {
                     lowerSentence.contains("the direct answer") ||
                     lowerSentence.contains("the main one") ||
                     lowerSentence.contains("the answer should be") ||
-                    lowerSentence.contains("the answer is")) {
+                    lowerSentence.contains("the answer is") ||
+                    lowerSentence.contains("okay, so") ||
+                    lowerSentence.contains("let me think") ||
+                    lowerSentence.contains("first, i remember") ||
+                    lowerSentence.contains("i should confirm") ||
+                    lowerSentence.contains("the text talks about") ||
+                    lowerSentence.contains("there's some confusion") ||
+                    lowerSentence.contains("the context seems") ||
+                    lowerSentence.contains("but the user is asking") ||
+                    lowerSentence.contains("even though the context") ||
+                    lowerSentence.contains("the answer is there") ||
+                    lowerSentence.contains("i should confirm that")) {
                     shouldRemove = true;
                 }
                 
@@ -1147,6 +1167,9 @@ public class RagService implements DisposableBean {
             
             // Remove multiple spaces and clean up
             ragOnlyCleaned = ragOnlyCleaned.replaceAll("\\s{2,}", " ").trim();
+            
+            logger.info("RAG Only filtering complete. Original sentences: {}, Cleaned sentences: {}", 
+                       sentences.length, cleanedSentences.toString().split("(?<=[.!?])\\s+").length);
             
             // If the cleaned response is significantly shorter, use it
             if (ragOnlyCleaned.length() > 20 && ragOnlyCleaned.length() < response.length() * 0.8) {

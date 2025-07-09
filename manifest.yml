@@ -2,7 +2,7 @@
 applications:
 - name: ragui-test
   random-route: true
-  path: target/ragui-1.0.13.jar
+  path: target/ragui-1.0.14.jar
   memory: 2G
   disk_quota: 2G
   instances: 1
