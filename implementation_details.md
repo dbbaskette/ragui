@@ -279,6 +279,69 @@ Created a modern, responsive web dashboard for monitoring embedProc instances at
 - **Troubleshooting**: Visual indicators for stuck or failed instances
 - **Notifications**: Success/error feedback for user actions
 
+## Token Management & LLM Truncation Prevention (Latest Update)
+
+### Problem Identified
+**Issue**: LLM responses were getting truncated when the total token count (context + user question + system prompt + response) exceeded the model's token limits. This was particularly problematic when:
+- Large context documents were retrieved
+- Complex system prompts were used
+- Structured prompting with `<thinking>` and `<answer>` blocks added overhead
+- No explicit token counting or management existed
+
+### Solution Implemented
+
+#### 1. Token Management Configuration
+Added configurable token limits to prevent truncation:
+```properties
+# Token Management - Prevent LLM truncation
+ragui.token.max-total-tokens=8000
+ragui.token.max-context-tokens=3000
+ragui.token.max-response-tokens=2000
+```
+
+#### 2. Token Estimation Utility
+Added `estimateTokens()` method for rough token counting:
+- Uses approximation: 1 token ≈ 4 characters
+- Provides real-time token estimation for all prompt components
+- Logs token usage for monitoring and debugging
+
+#### 3. Token-Aware Context Formatting
+Enhanced `formatDocumentsToContext()` to respect both character and token limits:
+- Checks both `maxContextChars` and `maxContextTokens`
+- Truncates documents intelligently when limits are exceeded
+- Provides detailed logging of token usage per document
+
+#### 4. Prompt Validation System
+Added `validateAndAdjustPrompt()` method that:
+- Estimates tokens for context, question, and system prompt
+- Reserves tokens for response and formatting overhead
+- Automatically truncates context when total tokens exceed limits
+- Falls back to question-only mode if context is too large
+
+#### 5. Integration Across All Modes
+Updated all RAG modes to use token validation:
+- **RAG + LLM Fallback**: Uses token-aware prompt construction
+- **RAG Only**: Validates prompts before LLM calls
+- **Non-streaming chat**: Applies same token management
+
+### Benefits Achieved
+- **No More Truncation**: Responses complete fully within token limits
+- **Intelligent Context Management**: Automatically adjusts context size based on token availability
+- **Better Resource Utilization**: Maximizes context usage while staying within limits
+- **Consistent Behavior**: All modes now handle token limits uniformly
+- **Detailed Monitoring**: Comprehensive logging of token usage for optimization
+
+### Configuration Options
+- `ragui.token.max-total-tokens`: Maximum total tokens for entire prompt
+- `ragui.token.max-context-tokens`: Maximum tokens allowed for context
+- `ragui.token.max-response-tokens`: Reserved tokens for LLM response
+- `ragui.context.max-chars`: Character limit (legacy, now secondary to token limits)
+
+### Files Modified
+- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Added token management methods and integration
+- `src/main/resources/application.properties`: Added token configuration
+- `src/main/resources/application-cloud.properties`: Added token configuration
+
 ## RAG Mode Improvements (Previous Update)
 
 ### RAG Only Mode Improvements (Latest Update)

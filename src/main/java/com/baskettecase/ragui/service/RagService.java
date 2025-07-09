@@ -19,6 +19,7 @@ import java.util.concurrent.*;
 import java.time.Instant;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import com.baskettecase.ragui.controller.QueryExpansionController;
 
 @Service
 public class RagService implements DisposableBean {
@@ -39,20 +40,40 @@ public class RagService implements DisposableBean {
     @Value("${ragui.debug.skip-query-cleaning:false}")
     private boolean skipQueryCleaning;
 
+    @Value("${ragui.context.max-chars:6000}")
+    private int maxContextChars;
+
+    @Value("${ragui.context.min-doc-chars:200}")
+    private int minDocChars;
+
+    // Token management configuration
+    @Value("${ragui.token.max-total-tokens:8000}")
+    private int maxTotalTokens;
+
+    @Value("${ragui.token.max-context-tokens:3000}")
+    private int maxContextTokens;
+
+    @Value("${ragui.token.max-response-tokens:2000}")
+    private int maxResponseTokens;
+
+    private final QueryExpansionController queryExpansionController;
+
     public RagService(ChatClient chatClient, VectorStore vectorStore,
                       @Value("${ragui.vector.similarity-threshold:0.5}") double similarityThreshold,
-                      @Value("${ragui.vector.top-k:5}") int topK) {
+                      @Value("${ragui.vector.top-k:5}") int topK,
+                      QueryExpansionController queryExpansionController) {
         this.chatClient = chatClient;
         this.similarityThreshold = similarityThreshold;
         this.topK = topK;
+        this.queryExpansionController = queryExpansionController;
         this.documentRetriever = VectorStoreDocumentRetriever.builder()
             .similarityThreshold(similarityThreshold) // Use configurable threshold
             .topK(topK) // Make top-k configurable too
             .vectorStore(vectorStore)
             .build();
         this.timeoutExecutor = Executors.newCachedThreadPool();
-        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, and newCachedThreadPool for timeoutExecutor.", 
-                   similarityThreshold, topK, skipQueryCleaning);
+        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, max-context-chars: {}, min-doc-chars: {}, token-limits: {}/{}/{}, and newCachedThreadPool for timeoutExecutor.", 
+                   similarityThreshold, topK, skipQueryCleaning, maxContextChars, minDocChars, maxContextTokens, maxResponseTokens, maxTotalTokens);
     }
 
     public interface RagStatusListener {
@@ -101,10 +122,18 @@ public class RagService implements DisposableBean {
                 simulateStreamingResponse(cleanAnswer, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
 
-            } else if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
+            } else             if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
                 if (statusListener != null) statusListener.onStatus("Querying database for relevant context (stream)", 20);
-                logger.debug("Checking for context (threshold {}) for stream message: {}", similarityThreshold, request.getMessage());
-                Query query = new Query(request.getMessage());
+                
+                // Apply query expansion if enabled
+                String searchQuery = request.getMessage();
+                if (queryExpansionController.isEnabled()) {
+                    if (statusListener != null) statusListener.onStatus("Expanding query for better retrieval", 15);
+                    searchQuery = expandQueryWithLLM(request.getMessage());
+                }
+                
+                logger.debug("Checking for context (threshold {}) for stream message: {}", similarityThreshold, searchQuery);
+                Query query = new Query(searchQuery);
                 List<Document> docs;
                 try {
                     logger.info("[{}] Vector DB (RAG+Fallback Stream) call started", Instant.now());
@@ -123,12 +152,17 @@ public class RagService implements DisposableBean {
 
                 String contextText = formatDocumentsToContext(docs);
 
-                String llmPrompt;
+                // Use token-aware prompt validation
+                String systemPrompt = "Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
+                                   "Then provide your complete final answer in an <answer> block. " +
+                                   "Keep thinking concise to leave room for a full answer. " +
+                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>";
+                
+                String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
+                
                 if (contextText != null && !contextText.isEmpty()) {
-                    llmPrompt = "Context:\n" + contextText + "\n\nUser Question:\n" + request.getMessage();
                     if (statusListener != null) statusListener.onStatus("Calling LLM with context for clean response", 70);
                 } else {
-                    llmPrompt = request.getMessage();
                     if (statusListener != null) statusListener.onStatus("Calling LLM without context for clean response", 70);
                 }
                 logger.debug("LLM Prompt (RAG+Fallback Mode): User: [{}]", llmPrompt);
@@ -208,16 +242,24 @@ public class RagService implements DisposableBean {
 
                 if (contextText != null && !contextText.isEmpty()) {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to analyze context (non-streaming for clean output)", 70);
+                    
+                    // Use token-aware prompt validation for RAG Only mode
+                    String systemPrompt = "Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
+                                        "Then provide your complete final answer in an <answer> block based on the provided context. " +
+                                        "Keep thinking concise to leave room for a full answer. " +
+                                        "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer> " +
+                                        "If the context does not contain the answer, state that clearly inside the <answer> block.";
+                    
+                    String basePrompt = validateAndAdjustPrompt(contextText, cleanedPrompt, systemPrompt);
+                    
                     String llmSummaryPrompt;
-                    {
-                        String llmSummaryPromptBase = "Context:\n" + contextText + "\n\nQuestion:\n" + cleanedPrompt + "\n\nAnswer:";
-                        if (lengthConstraint != null && !lengthConstraint.isEmpty()) {
-                            logger.info("[RAG ONLY STREAM] Appending length constraint to summary prompt: {}", lengthConstraint);
-                            llmSummaryPrompt = llmSummaryPromptBase + " " + lengthConstraint;
-                        } else {
-                            llmSummaryPrompt = llmSummaryPromptBase;
-                        }
+                    if (lengthConstraint != null && !lengthConstraint.isEmpty()) {
+                        logger.info("[RAG ONLY STREAM] Appending length constraint to summary prompt: {}", lengthConstraint);
+                        llmSummaryPrompt = basePrompt + "\n\nAnswer: " + lengthConstraint;
+                    } else {
+                        llmSummaryPrompt = basePrompt + "\n\nAnswer:";
                     }
+                    
                     logger.info("LLM Prompt (RAG Only Non-Streaming) [first 500 chars]: {}", llmSummaryPrompt.substring(0, Math.min(500, llmSummaryPrompt.length())));
                     logger.info("[{}] LLM (RAG Only Non-Streaming) call started", Instant.now());
 
@@ -297,9 +339,10 @@ public class RagService implements DisposableBean {
                 List<Document> docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 String contextText = formatDocumentsToContext(docs);
-                String llmPrompt = (contextText != null && !contextText.isEmpty()) 
-                    ? "Context:\n" + contextText + "\n\nUser Question:\n" + request.getMessage()
-                    : request.getMessage();
+                
+                // Use token-aware prompt validation
+                String systemPrompt = "Answer the user's question based on the provided context. If the context doesn't contain the answer, use your general knowledge.";
+                String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
                 String sourceCode = (contextText != null && !contextText.isEmpty()) ? "RAG context + LLM" : "LLM only (no context found)";
                 
                 if (statusListener != null) statusListener.onStatus("Calling LLM with prompt", 70);
@@ -318,6 +361,13 @@ public class RagService implements DisposableBean {
                 CleanedQueryResult cleanedResult = cleanQueryWithLlmExtractConstraint(request.getMessage(), "RAG ONLY");
                 String cleanedPrompt = cleanedResult.cleanedQuery;
                 String lengthConstraint = cleanedResult.lengthConstraint;
+                
+                // Apply query expansion if enabled
+                if (queryExpansionController.isEnabled()) {
+                    if (statusListener != null) statusListener.onStatus("Expanding query for better retrieval", 18);
+                    cleanedPrompt = expandQueryWithLLM(cleanedPrompt);
+                }
+                
                 if (statusListener != null) statusListener.onStatus("Querying vector DB for relevant context", 20);
                 Query query = new Query(cleanedPrompt);
                 List<Document> docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), this.timeoutExecutor)
@@ -389,6 +439,12 @@ public class RagService implements DisposableBean {
                 if (lengthConstraint != null && !lengthConstraint.isEmpty()) {
                     logger.info("[RAW RAG] Length constraint extracted: {}", lengthConstraint);
                 }
+            }
+
+            // Query expansion for raw RAG
+            if (queryExpansionController.isEnabled()) {
+                logger.info("[RAW RAG] Expanding query for better retrieval");
+                searchQuery = expandQueryWithLLM(searchQuery);
             }
             
             logger.info("VECTOR SEARCH DEBUG - Query to search: '{}'", searchQuery);
@@ -464,31 +520,68 @@ public class RagService implements DisposableBean {
         }
     }
 
+    /**
+     * Estimates token count for a given text (rough approximation: 1 token ≈ 4 characters)
+     */
+    private int estimateTokens(String text) {
+        if (text == null) return 0;
+        return (int) Math.ceil(text.length() / 4.0);
+    }
+
+    /**
+     * Formats documents into context with token-aware limits to prevent LLM truncation
+     */
     private String formatDocumentsToContext(List<Document> docs) {
         if (docs == null || docs.isEmpty()) {
             return null;
         }
         
-        // Limit context size to save tokens for thinking + answer
-        final int MAX_CONTEXT_CHARS = 8000; // Reasonable limit to save tokens for response
+        // Use both character and token limits for better control
+        final int MAX_CONTEXT_CHARS = maxContextChars;
+        final int MIN_DOC_CHARS = minDocChars;
+        final int MAX_CONTEXT_TOKENS = maxContextTokens;
+        
         StringBuilder context = new StringBuilder();
+        int totalChars = 0;
+        int totalTokens = 0;
+        int docsAdded = 0;
         
         for (Document doc : docs) {
             String content = doc.getFormattedContent();
-            if (context.length() + content.length() + 4 > MAX_CONTEXT_CHARS) {
-                // Truncate the current document to fit within limit
-                int remainingChars = MAX_CONTEXT_CHARS - context.length() - 4;
-                if (remainingChars > 100) { // Only add if we have meaningful space left
-                    content = content.substring(0, remainingChars) + "...";
+            int contentLength = content.length();
+            int contentTokens = estimateTokens(content);
+            
+            // Check both character and token limits
+            boolean exceedsCharLimit = totalChars + contentLength + 4 > MAX_CONTEXT_CHARS;
+            boolean exceedsTokenLimit = totalTokens + contentTokens + 1 > MAX_CONTEXT_TOKENS;
+            
+            if (exceedsCharLimit || exceedsTokenLimit) {
+                // Try to fit a truncated version if we have enough space for meaningful content
+                int remainingChars = MAX_CONTEXT_CHARS - totalChars - 4;
+                int remainingTokens = MAX_CONTEXT_TOKENS - totalTokens - 1;
+                
+                if (remainingChars > MIN_DOC_CHARS && remainingTokens > 50) {
+                    // Truncate based on the more restrictive limit
+                    int maxChars = Math.min(remainingChars, remainingTokens * 4);
+                    content = content.substring(0, Math.min(maxChars, contentLength)) + "...";
                     context.append(content).append("\\n\\n");
+                    docsAdded++;
+                    logger.info("Truncated document {} to fit context limits (chars: {}, tokens: {})", 
+                               docsAdded, totalChars + content.length(), totalTokens + estimateTokens(content));
                 }
                 break; // Stop adding more documents
             }
+            
             context.append(content).append("\\n\\n");
+            totalChars += contentLength + 4; // +4 for "\\n\\n"
+            totalTokens += contentTokens + 1; // +1 for "\\n\\n"
+            docsAdded++;
         }
         
         String result = context.toString().trim();
-        logger.info("Context formatted: {} characters from {} documents", result.length(), docs.size());
+        int finalTokens = estimateTokens(result);
+        logger.info("Context formatted: {} characters ({} tokens) from {} documents (max chars: {}, max tokens: {})", 
+                   result.length(), finalTokens, docsAdded, MAX_CONTEXT_CHARS, MAX_CONTEXT_TOKENS);
         return result;
     }
 
@@ -564,6 +657,106 @@ public class RagService implements DisposableBean {
             logger.info("[{}] Length constraint extracted: {}", modeTag, constraint);
         }
         return new CleanedQueryResult(cleanedPrompt, constraint);
+    }
+
+    /**
+     * Expands a query using the LLM to generate synonyms and related terms.
+     * This improves retrieval quality by finding more relevant documents.
+     */
+    private String expandQueryWithLLM(String originalQuery) {
+        try {
+            logger.info("[QUERY EXPANSION] Expanding query: '{}'", originalQuery);
+            
+            String expansionPrompt = String.format(
+                "Generate 2-3 synonyms or related terms for the query: '%s'. " +
+                "Focus on technical terms, alternative phrasings, and related concepts. " +
+                "Return ONLY the expanded query with synonyms separated by spaces. " +
+                "Keep it concise and relevant. " +
+                "Example: 'spring boot' → 'spring boot springboot java framework'",
+                originalQuery
+            );
+            
+            String expandedQuery = CompletableFuture.supplyAsync(() -> {
+                return chatClient.prompt()
+                    .system("You are a query expansion assistant. Generate relevant synonyms and related terms to improve search results.")
+                    .user(expansionPrompt)
+                    .call()
+                    .content();
+            }, this.timeoutExecutor)
+            .get(30, TimeUnit.SECONDS); // Shorter timeout for expansion
+            
+            // Clean the response and combine with original query
+            String cleanedExpansion = expandedQuery.trim()
+                .replaceAll("\\s+", " ") // Normalize whitespace
+                .replaceAll("[^a-zA-Z0-9\\s]", ""); // Remove special characters except spaces
+            
+            String finalQuery = originalQuery + " " + cleanedExpansion;
+            logger.info("[QUERY EXPANSION] Expanded query: '{}' → '{}'", originalQuery, finalQuery);
+            
+            return finalQuery;
+            
+        } catch (TimeoutException te) {
+            logger.warn("[QUERY EXPANSION] Expansion timed out, using original query: {}", originalQuery);
+            return originalQuery;
+        } catch (Exception e) {
+            logger.warn("[QUERY EXPANSION] Expansion failed, using original query: {} - Error: {}", 
+                       originalQuery, e.getMessage());
+            return originalQuery;
+        }
+    }
+
+    /**
+     * Validates and adjusts prompt to ensure it stays within token limits
+     */
+    private String validateAndAdjustPrompt(String contextText, String userQuestion, String systemPrompt) {
+        // Estimate tokens for each component
+        int contextTokens = estimateTokens(contextText != null ? contextText : "");
+        int questionTokens = estimateTokens(userQuestion);
+        int systemTokens = estimateTokens(systemPrompt);
+        
+        // Reserve tokens for response and overhead
+        int reservedTokens = maxResponseTokens + 200; // 200 tokens for formatting overhead
+        
+        // Calculate total estimated tokens
+        int totalTokens = contextTokens + questionTokens + systemTokens + reservedTokens;
+        
+        logger.info("Token estimation - Context: {}, Question: {}, System: {}, Reserved: {}, Total: {} (max: {})", 
+                   contextTokens, questionTokens, systemTokens, reservedTokens, totalTokens, maxTotalTokens);
+        
+        // If we're within limits, return the original prompt
+        if (totalTokens <= maxTotalTokens) {
+            return contextText != null && !contextText.isEmpty() 
+                ? "Context:\n" + contextText + "\n\nUser Question:\n" + userQuestion
+                : userQuestion;
+        }
+        
+        // If we're over the limit, we need to reduce context
+        int excessTokens = totalTokens - maxTotalTokens;
+        logger.warn("Prompt exceeds token limit by {} tokens. Reducing context.", excessTokens);
+        
+        if (contextText != null && !contextText.isEmpty()) {
+            // Calculate how much context we can keep
+            int maxContextTokensAllowed = maxContextTokens - excessTokens;
+            int maxContextCharsAllowed = maxContextTokensAllowed * 4; // Rough conversion
+            
+            if (maxContextCharsAllowed > minDocChars) {
+                // Truncate context to fit within limits
+                String truncatedContext = contextText.length() > maxContextCharsAllowed 
+                    ? contextText.substring(0, maxContextCharsAllowed) + "..."
+                    : contextText;
+                
+                logger.info("Truncated context from {} to {} characters to fit token limits", 
+                           contextText.length(), truncatedContext.length());
+                
+                return "Context:\n" + truncatedContext + "\n\nUser Question:\n" + userQuestion;
+            } else {
+                // Context is too large, use question only
+                logger.warn("Context too large for token limits, using question only");
+                return userQuestion;
+            }
+        }
+        
+        return userQuestion;
     }
 
     /**
