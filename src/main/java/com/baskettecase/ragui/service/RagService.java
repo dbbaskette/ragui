@@ -40,6 +40,9 @@ public class RagService implements DisposableBean {
     @Value("${ragui.debug.skip-query-cleaning:false}")
     private boolean skipQueryCleaning;
 
+    @Value("${ragui.debug.enable-reasoning:false}")
+    private boolean enableReasoning;
+
     @Value("${ragui.context.max-chars:6000}")
     private int maxContextChars;
 
@@ -72,8 +75,8 @@ public class RagService implements DisposableBean {
             .vectorStore(vectorStore)
             .build();
         this.timeoutExecutor = Executors.newCachedThreadPool();
-        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, max-context-chars: {}, min-doc-chars: {}, token-limits: {}/{}/{}, and newCachedThreadPool for timeoutExecutor.", 
-                   similarityThreshold, topK, skipQueryCleaning, maxContextChars, minDocChars, maxContextTokens, maxResponseTokens, maxTotalTokens);
+        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, enable-reasoning: {}, max-context-chars: {}, min-doc-chars: {}, token-limits: {}/{}/{}, and newCachedThreadPool for timeoutExecutor.", 
+                   similarityThreshold, topK, skipQueryCleaning, enableReasoning, maxContextChars, minDocChars, maxContextTokens, maxResponseTokens, maxTotalTokens);
     }
 
     public interface RagStatusListener {
@@ -93,13 +96,16 @@ public class RagService implements DisposableBean {
                 logger.debug("Using Pure LLM mode for stream: {}", request.getMessage());
                 logger.info("[{}] LLM (Pure) call started", Instant.now());
                 
-                // Use non-streaming call with direct prompting for quality
+                                // Use non-streaming call with direct prompting for quality
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
+                        String systemPrompt = enableReasoning ? 
+                            "Provide a clear, direct answer to the user's question. Be comprehensive and complete in your response." :
+                            "Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete in your response.";
+                        
                         return chatClient.prompt()
-                            .system("Provide a clear, direct answer to the user's question. " +
-                                   "Be comprehensive and complete in your response.")
+                            .system(systemPrompt)
                             .user(request.getMessage())
                             .call()
                             .content();
@@ -151,10 +157,16 @@ public class RagService implements DisposableBean {
                 String contextText = formatDocumentsToContext(docs);
 
                 // Use token-aware prompt validation
-                String systemPrompt = "Answer the question using the provided context and your own knowledge. " +
-                                   "If the context contains relevant information, use it. " +
-                                   "If the context doesn't contain the answer, use your general knowledge. " +
-                                   "Provide a comprehensive answer that combines both sources of information.";
+                String systemPrompt = enableReasoning ? 
+                    "Answer the question using the provided context and your own knowledge. " +
+                    "If the context contains relevant information, use it. " +
+                    "If the context doesn't contain the answer, use your general knowledge. " +
+                    "Provide a comprehensive answer that combines both sources of information." :
+                    "Answer the question using the provided context and your own knowledge. " +
+                    "If the context contains relevant information, use it. " +
+                    "If the context doesn't contain the answer, use your general knowledge. " +
+                    "Provide a comprehensive answer that combines both sources of information. " +
+                    "Do not include any reasoning, analysis, or thinking process.";
                 
                 String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
                 
@@ -170,11 +182,19 @@ public class RagService implements DisposableBean {
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
+                        String fallbackSystemPrompt = enableReasoning ? 
+                            "Answer the question using the provided context and your own knowledge. " +
+                            "If the context contains relevant information, use it. " +
+                            "If the context doesn't contain the answer, use your general knowledge. " +
+                            "Provide a comprehensive answer that combines both sources of information." :
+                            "Answer the question using the provided context and your own knowledge. " +
+                            "If the context contains relevant information, use it. " +
+                            "If the context doesn't contain the answer, use your general knowledge. " +
+                            "Provide a comprehensive answer that combines both sources of information. " +
+                            "Do not include any reasoning, analysis, or thinking process.";
+                        
                         return chatClient.prompt()
-                            .system("Answer the question using the provided context and your own knowledge. " +
-                                    "If the context contains relevant information, use it. " +
-                                    "If the context doesn't contain the answer, use your general knowledge. " +
-                                    "Provide a comprehensive answer that combines both sources of information.")
+                            .system(fallbackSystemPrompt)
                             .user(llmPrompt)
                             .call()
                             .content();
@@ -263,13 +283,21 @@ public class RagService implements DisposableBean {
 
                     try {
                         // Use non-streaming to get complete response, then clean it
-                        String fullResponse = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                            .system("Answer the question using ONLY the information provided in the context. " +
-                                    "Do not include any reasoning, analysis, or thinking process. " +
-                                    "Provide a direct, factual answer based on the context. " +
-                                    "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
-                                    "Keep your response concise and to the point.")
-                            .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
+                        String fullResponse = CompletableFuture.supplyAsync(() -> {
+                            String ragOnlySystemPrompt = enableReasoning ? 
+                                "Answer the question using ONLY the information provided in the context. " +
+                                "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
+                                "Keep your response concise and to the point." :
+                                "Answer the question using ONLY the information provided in the context. " +
+                                "Do not include any reasoning, analysis, or thinking process. " +
+                                "Provide a direct, factual answer based on the context. " +
+                                "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
+                                "Keep your response concise and to the point.";
+                            
+                            return chatClient.prompt()
+                                .system(ragOnlySystemPrompt)
+                                .user(llmSummaryPrompt).call().content();
+                        }, this.timeoutExecutor)
                             .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                         
                         logger.info("[{}] LLM (RAG Only Non-Streaming) call finished", Instant.now());
@@ -321,9 +349,15 @@ public class RagService implements DisposableBean {
 
             if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
-                String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .system("Provide a clear, direct answer to the user's question. Be comprehensive and complete.")
-                    .user(request.getMessage()).call().content(), this.timeoutExecutor)
+                String llmAnswer = CompletableFuture.supplyAsync(() -> {
+                    String pureLlmSystemPrompt = enableReasoning ? 
+                        "Provide a clear, direct answer to the user's question. Be comprehensive and complete." :
+                        "Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete.";
+                    
+                    return chatClient.prompt()
+                        .system(pureLlmSystemPrompt)
+                        .user(request.getMessage()).call().content();
+                }, this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
                 // Clean reasoning tokens from response - COMMENTED OUT: Using structured prompting now
@@ -964,6 +998,10 @@ public class RagService implements DisposableBean {
      * @param isRagOnly If true, applies stricter filtering for RAG Only mode
      */
     private String extractAnswer(String llmResponse, boolean isRagOnly) {
+        // If reasoning is enabled globally, skip filtering
+        if (enableReasoning) {
+            return llmResponse;
+        }
         if (llmResponse == null || llmResponse.trim().isEmpty()) {
             return "The provided context does not contain information to answer this question.";
         }

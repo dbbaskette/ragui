@@ -13,7 +13,7 @@
 
     <groupId>com.baskettecase</groupId>
     <artifactId>ragui</artifactId>
-    <version>1.0.13</version>
+    <version>1.0.14</version>
     <name>ragui</name>
     <description>Retrieval Augmented Generation UI with Spring AI, Ollama, and pgvector</description>
 
