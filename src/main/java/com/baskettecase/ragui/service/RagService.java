@@ -184,8 +184,9 @@ public class RagService implements DisposableBean {
                 
                 // Extract clean answer and simulate streaming
                 String cleanAnswer = extractAnswer(llmResponse);
+                String responseWithMode = cleanAnswer + "\n\n**<span style=\"color: #ffc107; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
                 if (statusListener != null) statusListener.onStatus("Streaming clean response", 90);
-                simulateStreamingResponse(cleanAnswer, chunkConsumer);
+                simulateStreamingResponse(responseWithMode, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
 
             } else { // RAG Only (implicitly, as Raw RAG is handled by JobController directly for non-streaming)
@@ -235,7 +236,7 @@ public class RagService implements DisposableBean {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to analyze context (non-streaming for clean output)", 70);
                     
                     // Use token-aware prompt validation for RAG Only mode
-                    String systemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context.";
+                    String systemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. If the information doesn't contain enough details, simply state that the information is not available.";
                     
                     String basePrompt = validateAndAdjustPrompt(contextText, cleanedPrompt, systemPrompt);
                     
@@ -253,7 +254,7 @@ public class RagService implements DisposableBean {
                     try {
                         // Use non-streaming to get complete response, then clean it
                         String fullResponse = CompletableFuture.supplyAsync(() -> {
-                            String ragOnlySystemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context.";
+                            String ragOnlySystemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. If the information doesn't contain enough details, simply state that the information is not available.";
                             
                             return chatClient.prompt()
                                 .system(ragOnlySystemPrompt)
@@ -267,8 +268,11 @@ public class RagService implements DisposableBean {
                         String cleanedResponse = extractAnswer(fullResponse);
                         logger.info("RAG Only cleaned response: {}", cleanedResponse);
                         
+                        // Add mode information to the response
+                        String responseWithMode = cleanedResponse + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
+                        
                         // Simulate streaming to maintain consistent UX with other modes
-                        simulateStreamingResponse(cleanedResponse, chunkConsumer);
+                        simulateStreamingResponse(responseWithMode, chunkConsumer);
                         if (statusListener != null) statusListener.onStatus("COMPLETED", 100);
                         
                     } catch (TimeoutException te) {
@@ -319,7 +323,7 @@ public class RagService implements DisposableBean {
                 }, this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = "LLM Answer:\n" + llmAnswer + "\n\nSource: LLM only";
+                answer = "LLM Answer:\n" + llmAnswer + "\n\n**<span style=\"color: #28a745; font-weight: bold;\">(Pure LLM)</span>**";
                 source = "LLM";
 
             } else if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
@@ -343,7 +347,7 @@ public class RagService implements DisposableBean {
                     .user(llmPrompt).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = llmAnswer + "\n\nSource: " + sourceCode;
+                answer = llmAnswer + "\n\n**<span style=\"color: #ffc107; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
                 source = "LLM_FALLBACK";
 
             } else { // RAG Only
@@ -375,11 +379,11 @@ public class RagService implements DisposableBean {
                         llmSummaryPrompt = llmSummaryPromptBase;
                     }
                     String llmSummary = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                        .system("You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context.")
+                                                        .system("You are a helpful AI assistant. Answer the user's question using ONLY the information provided. If the information doesn't contain enough details, simply state that the information is not available.")
                         .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
                         .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                    answer = llmSummary + "\n\nSource: RAG context summarized by LLM";
+                    answer = llmSummary + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
                     source = "RAG";
                 } else {
                     answer = "I couldn't find relevant information in the knowledge base to answer your question.";
