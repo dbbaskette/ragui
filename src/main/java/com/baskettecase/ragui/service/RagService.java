@@ -115,8 +115,9 @@ public class RagService implements DisposableBean {
                 
                 // Extract clean answer and simulate streaming
                 String cleanAnswer = extractAnswer(llmResponse);
+                String responseWithMode = cleanAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**";
                 if (statusListener != null) statusListener.onStatus("Streaming clean response", 90);
-                simulateStreamingResponse(cleanAnswer, chunkConsumer);
+                simulateStreamingResponse(responseWithMode, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
 
             } else             if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
@@ -184,7 +185,7 @@ public class RagService implements DisposableBean {
                 
                 // Extract clean answer and simulate streaming
                 String cleanAnswer = extractAnswer(llmResponse);
-                String responseWithMode = cleanAnswer + "\n\n**<span style=\"color: #ffc107; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
+                String responseWithMode = cleanAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
                 if (statusListener != null) statusListener.onStatus("Streaming clean response", 90);
                 simulateStreamingResponse(responseWithMode, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
@@ -287,7 +288,7 @@ public class RagService implements DisposableBean {
                 } else {
                     logger.info("No context found for RAG Only stream. Completing.");
                     if (statusListener != null) statusListener.onStatus("No context found, stream complete", 90);
-                    chunkConsumer.accept("I couldn't find relevant information in the knowledge base to answer your question.");
+                    chunkConsumer.accept("I couldn't find relevant information in the knowledge base to answer your question.\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**");
                     if (statusListener != null) statusListener.onStatus("COMPLETED", 100);
                 }
             }
@@ -323,7 +324,7 @@ public class RagService implements DisposableBean {
                 }, this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = "LLM Answer:\n" + llmAnswer + "\n\n**<span style=\"color: #28a745; font-weight: bold;\">(Pure LLM)</span>**";
+                answer = "LLM Answer:\n" + llmAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**";
                 source = "LLM";
 
             } else if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
@@ -347,7 +348,7 @@ public class RagService implements DisposableBean {
                     .user(llmPrompt).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                answer = llmAnswer + "\n\n**<span style=\"color: #ffc107; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
+                answer = llmAnswer + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**";
                 source = "LLM_FALLBACK";
 
             } else { // RAG Only
@@ -386,7 +387,7 @@ public class RagService implements DisposableBean {
                     answer = llmSummary + "\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
                     source = "RAG";
                 } else {
-                    answer = "I couldn't find relevant information in the knowledge base to answer your question.";
+                    answer = "I couldn't find relevant information in the knowledge base to answer your question.\n\n**<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
                     source = "RAG_NO_CONTEXT";
                 }
             }
