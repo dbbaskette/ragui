@@ -42,7 +42,7 @@ Frontend polling `/api/status` will see these updates in real-time.
 - **New Script**: Added `deploy.sh` for streamlined build and deployment workflow
 - **Features**:
   - Combines Maven build (`mvn clean package`) and Cloud Foundry deployment (`cf push`)
-  - Auto-detects current version from `pom.xml` and updates JAR path in manifest
+  - Auto-detects current version from `pom.xml` and validates JAR existence
   - Validates CF CLI availability and login status
   - Provides colored output with clear status indicators
   - Supports `--skip-build` for quick redeploys
@@ -53,6 +53,42 @@ Frontend polling `/api/status` will see these updates in real-time.
   - `./deploy.sh --app-name ragui-prod` - Deploy to production instance
 - **Benefits**: Simplifies the deploy process vs. manual `mvn clean package` + `cf push`
 
+## Manifest Dynamic Path Enhancement (2025-07-09)
+- **Dynamic JAR Path**: Updated deployment scripts to automatically update manifest.yml with correct JAR path
+- **Features**:
+  - Deployment scripts automatically update `manifest.yml` with the correct JAR path
+  - Works with any version number automatically
+  - Compatible with all deployment scripts (`deploy.sh`, `deploy-secure.sh`, `release.sh`)
+  - No manual manifest updates required for version changes
+- **Benefits**:
+  - No manual manifest updates required for new versions
+  - Reduces deployment friction and potential errors
+  - Works seamlessly with automated release process
+  - Maintains backward compatibility with existing deployment workflows
+  - Handles Cloud Foundry's requirement for exact file paths
+
+## Release Script Enhancement (2025-07-09)
+- **Enhanced Build Detection**: Modified `.release-exec` to detect and use `build-secure.sh` when available
+- **Features**:
+  - Automatically detects `build-secure.sh` in the project root
+  - Uses secure build process when available, falls back to standard Maven build
+  - Maintains compatibility with existing release workflow
+  - Integrates with GitHub release creation and artifact upload
+- **Build Logic**:
+  - If `build-secure.sh` exists: executes `./build-secure.sh`
+  - If not found: uses standard `mvn clean package` with optional `-DskipTests`
+  - Preserves all existing build tool detection (Maven/Gradle)
+  - Maintains artifact discovery and JAR file location logic
+- **Manifest Integration**: 
+  - Automatically updates `manifest.yml` with correct JAR path after build
+  - Works for both full releases and upload-only operations
+  - Ensures manifest is always synchronized with built artifact
+- **Benefits**: 
+  - Seamless integration of secure credential handling in release process
+  - No manual intervention required for secure builds
+  - Maintains backward compatibility with standard builds
+  - Automatic manifest synchronization prevents deployment issues
+
 ---
 
 *See also: gotchas.md for edge cases and warnings.*
@@ -60,199 +96,252 @@ Frontend polling `/api/status` will see these updates in real-time.
 # RAG UI Implementation Details
 
 ## Overview
-This document contains technical implementation details, configuration notes, and lessons learned during the development and deployment of the RAG UI application.
+RAG UI is a Spring Boot application that provides a conversational interface for querying a vector database using RAG (Retrieval-Augmented Generation) techniques. The system supports multiple response modes and provides both streaming and non-streaming interfaces.
 
-## RAG Only Mode Improvements (Latest Update)
+## Core Components
 
-### RAG Only Response Quality Fix
-**Problem**: RAG Only mode was returning verbose LLM reasoning steps instead of clean, direct answers. Users were seeing all the internal thinking process like "Looking through the context", "Let me check again", etc.
+### RagService
+The main service that handles all RAG operations. Located at `src/main/java/com/baskettecase/ragui/service/RagService.java`.
 
-**Root Cause**: 
-- **Streaming vs. Reasoning Conflict**: Reasoning models naturally generate thinking chunks first, and streaming sends these chunks immediately to the user
-- Chunk-level filtering couldn't effectively separate reasoning from final answers  
-- Fighting the natural flow of reasoning models instead of working with it
+#### Key Features:
+- **Multiple Response Modes**: Pure LLM, RAG + LLM Fallback, RAG Only, and Raw RAG
+- **Streaming Support**: Real-time response streaming with progress updates
+- **Token Management**: Prevents LLM truncation through token-aware context management
+- **Query Processing**: Intelligent query cleaning and expansion
+- **Simple System Prompts**: Clean, direct prompts for each mode without complex filtering
 
-**Solution**:
-- **Hybrid Approach - Non-Streaming Processing + Simulated Streaming**: Let the LLM complete its full response (including internal thinking), clean it, then simulate streaming to maintain consistent UX
-- **Enhanced System Prompt**: Updated to explicitly allow internal thinking while requiring clean output: "You may think through the question internally, but your response must contain ONLY the final answer based on the provided context"
-- **Improved Response Processing**: Post-process the complete response using `cleanRawLlmResponse()` to extract the final answer and remove any reasoning that slipped through
-- **Streaming Simulation**: Added `simulateStreamingResponse()` method that chunks the clean response word-by-word to match the streaming experience of other modes
-- **Better Error Handling**: Added proper timeout and error handling for the non-streaming approach
+#### Response Modes:
 
-**Benefits**:
-- **Better Answer Quality**: LLM can use full reasoning capabilities to analyze context
-- **Clean User Experience**: Users only see the final, polished answer without reasoning steps
-- **Consistent UX**: All response modes now have the same streaming appearance to users
-- **Reliable Output**: No more reasoning chunks leaking through to the frontend
-- **Optimal Performance**: Single LLM call with simulated streaming for best of both worlds
+1. **Pure LLM Mode**
+   - Uses only the LLM's knowledge
+   - System prompt: "You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**'."
 
-**Key Behavioral Changes**:
-- **RAG Only**: Now provides clean, direct answers sourced only from retrieved context (appears streaming but internally processes non-streaming for quality)
-- **RAG + LLM Fallback**: Still allows broader LLM knowledge when context is insufficient (true streaming)
-- **Pure LLM**: Unchanged - uses full LLM capabilities without context restrictions (true streaming)
+2. **RAG + LLM Fallback Mode**
+   - Combines retrieved context with LLM knowledge
+   - System prompt: "You are a helpful AI assistant. Use the provided context and expand on it using your vast knowledge to answer the question thoroughly with supporting information. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**'."
 
-**User Experience**: All modes now appear to stream text naturally, maintaining consistent interface behavior while RAG Only delivers superior answer quality through internal processing.
+3. **RAG Only Mode**
+   - Uses only retrieved context, no external knowledge
+   - System prompt: "You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context. IMPORTANT: You MUST end your response with exactly: **<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**"
 
-**Files Modified**:
-- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Switched RAG Only to non-streaming, enhanced system prompts, improved response processing
+4. **Raw RAG Mode**
+   - Returns raw retrieved documents without LLM processing
+   - Used for debugging and document inspection
 
-## RAG Configuration Fixes (Previous Update)
+#### Simplified Answer Extraction:
+- Removed complex filtering and reasoning pattern removal
+- Simple `extractAnswer()` method that returns the LLM response as-is
+- Clean, direct responses without post-processing
 
-### Issues Identified and Resolved
+### Configuration
 
-#### 1. Vector Search Similarity Threshold Too High
-**Problem**: The `VectorStoreDocumentRetriever` was hardcoded with a similarity threshold of 0.7, which is very restrictive for Spring AI 1.0.0. This caused the vector search to return 0 results even for queries that should match existing documents.
-
-**Root Cause**: Spring AI 1.0.0 documentation shows that the default threshold is 0.0 (accept all), and values closer to 1 indicate higher similarity. A threshold of 0.7 was excluding too many potentially relevant documents.
-
-**Solution**: 
-- Made similarity threshold configurable via `ragui.vector.similarity-threshold` property
-- Set default to 0.5 (more permissive)
-- Added `ragui.vector.top-k` property for configurable result count
-- Updated both local and cloud configurations
-
-**Configuration Added**:
+#### Token Management (application.properties):
 ```properties
-# RAG Configuration - More permissive similarity threshold
-ragui.vector.similarity-threshold=0.3
+# Token limits to prevent LLM truncation
+ragui.token.max-total-tokens=8000
+ragui.token.max-context-tokens=3000
+ragui.token.max-response-tokens=2000
+```
+
+#### Context Management:
+```properties
+# Context size limits
+ragui.context.max-chars=4000
+ragui.context.min-doc-chars=200
+```
+
+#### Vector Search:
+```properties
+# Vector similarity and retrieval settings
+ragui.vector.similarity-threshold=0.6
 ragui.vector.top-k=5
 ```
 
-#### 2. Vector Store Dimension Mismatch
-**Problem**: Local development used 768 dimensions while cloud used 1536 dimensions, suggesting different embedding models.
+### Query Processing
 
-**Solution**: 
-- Standardized both environments to use 1536 dimensions (OpenAI text-embedding-ada-002 standard)
-- Added explicit embedding model configuration
-- Ensured consistency between local and cloud profiles
+#### Query Cleaning:
+- Uses LLM to clean and rephrase user queries
+- Extracts length constraints for better responses
+- Can be bypassed with `ragui.debug.skip-query-cleaning=true`
 
-#### 3. Poor Error Message Formatting
-**Problem**: Error messages showed technical details like "No relevant context was found to answer your question.\n\nSource: 0 (no context)" which is confusing for users.
+#### Query Expansion:
+- Optional feature to improve retrieval
+- Controlled by `QueryExpansionController.isEnabled()`
 
-**Solution**: Cleaned up all error messages to be user-friendly:
-- "I couldn't find relevant information in the knowledge base to answer your question."
-- "I couldn't find any relevant documents in the knowledge base for your question."
+### Streaming Implementation
 
-#### 4. Missing Embedding Model Configuration
-**Problem**: No explicit embedding model configuration could lead to inconsistent vector dimensions.
+#### Simulated Streaming:
+- Uses `simulateStreamingResponse()` for consistent UX
+- Breaks responses into word-level chunks with small delays
+- Provides progress updates through `RagStatusListener`
 
-**Solution**: Added explicit embedding model configuration in both profiles:
-```properties
-# Local
-spring.ai.openai.embedding.options.model=text-embedding-ada-002
+#### Progress Tracking:
+- Query cleaning: 15-18%
+- Vector search: 20-40%
+- LLM processing: 70-90%
+- Completion: 100%
 
-# Cloud
-spring.ai.openai.embedding.options.model=${vcap.services.embed-model.credentials.model_name:text-embedding-ada-002}
+### Error Handling
+
+#### Timeout Management:
+- 180-second timeout for all async operations
+- Uses `CompletableFuture` with timeout executor
+- Graceful error messages for timeouts
+
+#### Exception Handling:
+- Comprehensive try-catch blocks
+- Detailed logging for debugging
+- User-friendly error messages
+
+### Performance Optimizations
+
+#### Token-Aware Context Management:
+- Estimates tokens using character count (1 token ≈ 4 characters)
+- Prevents exceeding LLM token limits
+- Balances context inclusion with response space
+
+#### Async Processing:
+- Non-blocking operations using `CompletableFuture`
+- Shared timeout executor for resource efficiency
+- Concurrent vector search and LLM calls
+
+### Debugging Features
+
+#### Logging:
+- Detailed debug logs for vector search
+- Token estimation logging
+- Response mode tracking
+
+#### Configuration Flags:
+- `ragui.debug.skip-query-cleaning`: Bypass query processing
+- Query expansion enable/disable
+- Verbose logging controls
+
+## Architecture Patterns
+
+### Service Layer:
+- `RagService`: Main business logic
+- `JobService`: Background job processing
+- `EmbedProcMonitoringService`: Embedding process monitoring
+
+### Controller Layer:
+- `ChatController`: Main chat interface
+- `JobController`: Background job management
+- `StatusController`: System status endpoints
+
+### Configuration:
+- `AiConfig`: AI service configuration
+- `SecurityConfig`: Authentication setup
+- `CloudConfig`: Cloud Foundry integration
+
+## Secure Credential Management (2025-01-XX)
+
+### Overview
+Default user credentials are now managed securely through a non-tracked properties file to prevent credential exposure in version control.
+
+### Implementation:
+- **Template File**: `src/main/resources/application-secure.properties.template`
+- **Secure File**: `src/main/resources/application-secure.properties` (gitignored)
+- **Build Scripts**: `build-secure.sh` and `deploy-secure.sh`
+- **Environment Variables**: `DEFAULT_USERNAME` and `DEFAULT_PASSWORD`
+
+### Security Features:
+- Credentials are not tracked in git (added to .gitignore)
+- Environment variable support for CI/CD pipelines
+- Template-based approach for easy setup
+- Automatic credential injection during build process
+
+### Usage:
+```bash
+# Option 1: Environment variables (recommended)
+export DEFAULT_USERNAME=your_username
+export DEFAULT_PASSWORD=your_secure_password
+./build-secure.sh
+
+# Option 2: Manual configuration
+cp src/main/resources/application-secure.properties.template src/main/resources/application-secure.properties
+# Edit the file with your credentials
+./build-secure.sh
 ```
 
-### Files Modified
-- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Made similarity threshold configurable, improved error messages
-- `src/main/resources/application.properties`: Added RAG config, fixed dimensions, added embedding model
-- `src/main/resources/application-cloud.properties`: Added RAG config, added embedding model config
+### Build Process:
+1. Checks for existing secure properties file
+2. Creates from template if missing
+3. Replaces placeholders with environment variables or defaults
+4. Builds application with secure credentials included
+5. Cleans up temporary files
 
-### Testing Recommendation
-After these changes, test with:
-1. Simple queries that should definitely match (e.g., if you have Spring Boot docs, query "What is Spring Boot?")
-2. Verify that similarity threshold can be adjusted via configuration
-3. Check that error messages are now user-friendly when no matches are found
+### Deployment:
+- `deploy-secure.sh` handles both build and deployment with secure credentials
+- Compatible with Cloud Foundry and other cloud platforms
+- Maintains security best practices for credential management
 
-## Previous Implementation Details
+## Integration Points
 
-## Security Configuration Updates
+### Vector Database:
+- PostgreSQL with pgvector extension
+- Cosine distance similarity
+- Configurable similarity thresholds
 
-### Spring Security Configuration Fix
-**Issue**: After deploying to Cloud Foundry, the application returned 403 Forbidden errors for API calls.
-**Cause**: Spring Security was requiring authentication for all requests, including the `/api/**` endpoints used by the frontend.
-**Solution**: Updated `SecurityConfig.java` to permit API endpoints and static resources without authentication.
+### AI Services:
+- OpenAI-compatible API endpoints
+- Configurable models for chat and embedding
+- Token-aware prompt management
 
-**Key Changes**:
-- Added `.requestMatchers("/api/**").permitAll()` for API endpoints
-- Added `.requestMatchers("/*.css", "/*.js", "/*.png", "/*.ico", "/*.html").permitAll()` for static files
-- Disabled CSRF with `.csrf(csrf -> csrf.disable())`
-- Added `/actuator/**` to permitted paths
+### Cloud Foundry:
+- Service binding for database and AI services
+- Environment-specific configuration
+- Health check endpoints
 
-### Static Resource Serving Fix
-**Issue**: CSS and JavaScript files were being served as HTML content (redirected to login page).
-**Solution**: Added specific matchers for root-level static files in security configuration.
+## Security
 
-## Actuator Configuration
-**Change**: Set `management.endpoint.health.show-details=always` to display health check details after removing authentication.
+### Authentication:
+- Basic authentication with configurable credentials
+- Default user: `tanzu` / `t@nzu123`
+- Configurable via `app.security.default-user.*`
 
-## UI Layout Improvements
+### CORS:
+- Configured for web interface access
+- Cross-origin request handling
 
-### Status Panel Optimization
-**Issue**: With 8+ status messages, the status area and chat window grew so large that response mode controls were pushed off-screen.
+## Monitoring
 
-**Solution**: Implemented comprehensive CSS improvements:
-- Reduced chat window height from 450px to 320px on desktop
-- Added status log panel with:
-  - Maximum height of 100px with scrolling
-  - Smaller font size (0.65em)
-  - Compact spacing (2px between entries)
-  - Monospace font for consistency
-  - Automatic scroll to newest entries
-- Enhanced mobile responsiveness with even smaller fonts and heights
-- Status entries now show ellipsis for long text
-- Most recent status entry is highlighted
+### Health Checks:
+- Actuator endpoints for health monitoring
+- Detailed health information exposure
+- Cloud Foundry integration
 
-**Files Modified**: `src/main/resources/static/style.css`
+### Metrics:
+- Embedding process monitoring
+- Response time tracking
+- Error rate monitoring
 
-## Deployment Automation
+## Deployment
 
-### Deploy Script Creation
-Created `deploy.sh` script for streamlined deployment process:
-- Combines Maven build and Cloud Foundry deployment
-- Auto-detects version from pom.xml
-- Validates CF CLI installation and login status
-- Updates manifest.yml with correct JAR path automatically
-- Supports command-line options (`--skip-build`, `--app-name`)
-- Provides colored output and status indicators
-- Made executable with proper permissions
+### Cloud Foundry:
+- `manifest.yml` for deployment configuration
+- Service bindings for database and AI services
+- Environment-specific properties
 
-**Usage**: `./deploy.sh` or `./deploy.sh --skip-build --app-name my-app`
+### Build:
+- Maven-based build system
+- Spring Boot executable JAR
+- Maven wrapper included
 
-## Architecture Notes
+## Development Workflow
 
-### Vector Store
-- Using PostgreSQL with pgvector extension
-- Configured for COSINE_DISTANCE similarity
-- Table name: `vector_store`
-- HNSW index type for efficient similarity search
+### Local Development:
+- H2 database for local testing
+- Embedded vector store
+- Hot reload support
 
-### Spring AI Integration
-- Spring AI 1.0.0 with OpenAI integration
-- Automatic configuration via Cloud Foundry VCAP services
-- RAG implementation using VectorStoreDocumentRetriever
-- Streaming and non-streaming chat support
+### Testing:
+- Unit tests for service components
+- Integration tests for API endpoints
+- Mock services for external dependencies
 
-### Job Management
-- Asynchronous processing with ExecutorService
-- Timeout handling (180 seconds default)
-- Status tracking with progress indicators
-- Support for multiple response modes (RAG-only, RAG+LLM fallback, Pure LLM, Raw RAG)
-
-## Gotchas and Lessons Learned
-
-### Cloud Foundry Deployment
-1. **VCAP Services**: Ensure service names in manifest.yml match bound services
-2. **Memory Allocation**: 2GB memory allocation needed for Spring AI + OpenAI integration
-3. **Profile Activation**: Use `SPRING_PROFILES_ACTIVE: cloud` for environment-specific config
-4. **Static Resources**: Spring Security can interfere with static file serving
-
-### Spring Security
-1. **API Endpoints**: Remember to explicitly permit API endpoints used by frontend
-2. **Static Files**: Root-level static files need specific security matchers
-3. **CSRF**: Disable CSRF for API-only applications to avoid token issues
-
-### Spring AI Vector Search
-1. **Similarity Thresholds**: Lower thresholds (0.3-0.5) work better than high thresholds (0.7+)
-2. **Dimensions**: Ensure vector store dimensions match embedding model dimensions
-3. **Error Handling**: Provide user-friendly messages for no-match scenarios
-4. **Configuration**: Make similarity thresholds configurable rather than hardcoded
-5. **RAG Only Mode**: Requires strong system prompts and response filtering to prevent LLM reasoning display
-
-### UI Considerations
-1. **Status Logging**: Implement scrollable, height-limited status panels for better UX
-2. **Mobile Responsiveness**: Test with various screen sizes and status message counts
-3. **Response Mode Controls**: Ensure critical UI elements remain visible with dynamic content
+### Documentation:
+- Comprehensive inline documentation
+- Implementation details tracking
+- Gotchas and edge cases documented
 

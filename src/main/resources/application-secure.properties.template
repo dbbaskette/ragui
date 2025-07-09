@@ -1,0 +1,7 @@
+# Secure credentials template
+# This file should be copied to application-secure.properties during build
+# and the actual credentials should be set there
+
+# Default user credentials
+app.security.default-user.username=${DEFAULT_USERNAME:tanzu}
+app.security.default-user.password=${DEFAULT_PASSWORD:t@nzu123} 

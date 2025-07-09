@@ -19,6 +19,7 @@ import java.util.concurrent.*;
 import java.time.Instant;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import com.baskettecase.ragui.controller.QueryExpansionController;
 
 @Service
 public class RagService implements DisposableBean {
@@ -39,20 +40,40 @@ public class RagService implements DisposableBean {
     @Value("${ragui.debug.skip-query-cleaning:false}")
     private boolean skipQueryCleaning;
 
+    @Value("${ragui.context.max-chars:6000}")
+    private int maxContextChars;
+
+    @Value("${ragui.context.min-doc-chars:200}")
+    private int minDocChars;
+
+    // Token management configuration
+    @Value("${ragui.token.max-total-tokens:8000}")
+    private int maxTotalTokens;
+
+    @Value("${ragui.token.max-context-tokens:3000}")
+    private int maxContextTokens;
+
+    @Value("${ragui.token.max-response-tokens:2000}")
+    private int maxResponseTokens;
+
+    private final QueryExpansionController queryExpansionController;
+
     public RagService(ChatClient chatClient, VectorStore vectorStore,
                       @Value("${ragui.vector.similarity-threshold:0.5}") double similarityThreshold,
-                      @Value("${ragui.vector.top-k:5}") int topK) {
+                      @Value("${ragui.vector.top-k:5}") int topK,
+                      QueryExpansionController queryExpansionController) {
         this.chatClient = chatClient;
         this.similarityThreshold = similarityThreshold;
         this.topK = topK;
+        this.queryExpansionController = queryExpansionController;
         this.documentRetriever = VectorStoreDocumentRetriever.builder()
             .similarityThreshold(similarityThreshold) // Use configurable threshold
             .topK(topK) // Make top-k configurable too
             .vectorStore(vectorStore)
             .build();
         this.timeoutExecutor = Executors.newCachedThreadPool();
-        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, and newCachedThreadPool for timeoutExecutor.", 
-                   similarityThreshold, topK, skipQueryCleaning);
+        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, max-context-chars: {}, min-doc-chars: {}, token-limits: {}/{}/{}, and newCachedThreadPool for timeoutExecutor.", 
+                   similarityThreshold, topK, skipQueryCleaning, maxContextChars, minDocChars, maxContextTokens, maxResponseTokens, maxTotalTokens);
     }
 
     public interface RagStatusListener {
@@ -72,15 +93,12 @@ public class RagService implements DisposableBean {
                 logger.debug("Using Pure LLM mode for stream: {}", request.getMessage());
                 logger.info("[{}] LLM (Pure) call started", Instant.now());
                 
-                // Use non-streaming call with structured prompting for quality
+                                                // Use non-streaming call with direct prompting for quality
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("Think briefly about your response in a <thinking> block (2-3 sentences max). " +
-                                   "Then provide your complete final answer in an <answer> block. " +
-                                   "Keep thinking concise to leave room for a full answer. " +
-                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>")
+                            .system("You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**'.")
                             .user(request.getMessage())
                             .call()
                             .content();
@@ -97,14 +115,23 @@ public class RagService implements DisposableBean {
                 
                 // Extract clean answer and simulate streaming
                 String cleanAnswer = extractAnswer(llmResponse);
+                                    String responseWithMode = cleanAnswer;
                 if (statusListener != null) statusListener.onStatus("Streaming clean response", 90);
-                simulateStreamingResponse(cleanAnswer, chunkConsumer);
+                simulateStreamingResponse(responseWithMode, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
 
-            } else if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
+            } else             if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
                 if (statusListener != null) statusListener.onStatus("Querying database for relevant context (stream)", 20);
-                logger.debug("Checking for context (threshold {}) for stream message: {}", similarityThreshold, request.getMessage());
-                Query query = new Query(request.getMessage());
+                
+                // Apply query expansion if enabled
+                String searchQuery = request.getMessage();
+                if (queryExpansionController.isEnabled()) {
+                    if (statusListener != null) statusListener.onStatus("Expanding query for better retrieval", 15);
+                    searchQuery = expandQueryWithLLM(request.getMessage());
+                }
+                
+                logger.debug("Checking for context (threshold {}) for stream message: {}", similarityThreshold, searchQuery);
+                Query query = new Query(searchQuery);
                 List<Document> docs;
                 try {
                     logger.info("[{}] Vector DB (RAG+Fallback Stream) call started", Instant.now());
@@ -123,26 +150,25 @@ public class RagService implements DisposableBean {
 
                 String contextText = formatDocumentsToContext(docs);
 
-                String llmPrompt;
+                // Use token-aware prompt validation
+                String systemPrompt = "You are a helpful AI assistant. Use the provided context and expand on it using your vast knowledge to answer the question thoroughly with supporting information. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**'.";
+                
+                String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
+                
                 if (contextText != null && !contextText.isEmpty()) {
-                    llmPrompt = "Context:\n" + contextText + "\n\nUser Question:\n" + request.getMessage();
                     if (statusListener != null) statusListener.onStatus("Calling LLM with context for clean response", 70);
                 } else {
-                    llmPrompt = request.getMessage();
                     if (statusListener != null) statusListener.onStatus("Calling LLM without context for clean response", 70);
                 }
                 logger.debug("LLM Prompt (RAG+Fallback Mode): User: [{}]", llmPrompt);
                 logger.info("[{}] LLM (RAG+Fallback) call started", Instant.now());
 
-                // Use non-streaming call with structured prompting for quality
+                                // Use non-streaming call with direct prompting for quality
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
                         return chatClient.prompt()
-                            .system("Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
-                                   "Then provide your complete final answer in an <answer> block. " +
-                                   "Keep thinking concise to leave room for a full answer. " +
-                                   "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer>")
+                            .system("You are a helpful AI assistant. Use the provided context and expand on it using your vast knowledge to answer the question thoroughly with supporting information. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**'.")
                             .user(llmPrompt)
                             .call()
                             .content();
@@ -159,8 +185,9 @@ public class RagService implements DisposableBean {
                 
                 // Extract clean answer and simulate streaming
                 String cleanAnswer = extractAnswer(llmResponse);
+                String responseWithMode = cleanAnswer;
                 if (statusListener != null) statusListener.onStatus("Streaming clean response", 90);
-                simulateStreamingResponse(cleanAnswer, chunkConsumer);
+                simulateStreamingResponse(responseWithMode, chunkConsumer);
                 if (statusListener != null) statusListener.onStatus("LLM stream complete", 100);
 
             } else { // RAG Only (implicitly, as Raw RAG is handled by JobController directly for non-streaming)
@@ -208,28 +235,32 @@ public class RagService implements DisposableBean {
 
                 if (contextText != null && !contextText.isEmpty()) {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to analyze context (non-streaming for clean output)", 70);
+                    
+                    // Use token-aware prompt validation for RAG Only mode
+                    String systemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. Restate the information in a clear and concise answer. If the information doesn't contain enough details, simply state that the information is not available. IMPORTANT: You MUST end your response with exactly: **<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
+                    
+                    String basePrompt = validateAndAdjustPrompt(contextText, cleanedPrompt, systemPrompt);
+                    
                     String llmSummaryPrompt;
-                    {
-                        String llmSummaryPromptBase = "Context:\n" + contextText + "\n\nQuestion:\n" + cleanedPrompt + "\n\nAnswer:";
-                        if (lengthConstraint != null && !lengthConstraint.isEmpty()) {
-                            logger.info("[RAG ONLY STREAM] Appending length constraint to summary prompt: {}", lengthConstraint);
-                            llmSummaryPrompt = llmSummaryPromptBase + " " + lengthConstraint;
-                        } else {
-                            llmSummaryPrompt = llmSummaryPromptBase;
-                        }
+                    if (lengthConstraint != null && !lengthConstraint.isEmpty()) {
+                        logger.info("[RAG ONLY STREAM] Appending length constraint to summary prompt: {}", lengthConstraint);
+                        llmSummaryPrompt = basePrompt + "\n\nAnswer: " + lengthConstraint;
+                    } else {
+                        llmSummaryPrompt = basePrompt + "\n\nAnswer:";
                     }
+                    
                     logger.info("LLM Prompt (RAG Only Non-Streaming) [first 500 chars]: {}", llmSummaryPrompt.substring(0, Math.min(500, llmSummaryPrompt.length())));
                     logger.info("[{}] LLM (RAG Only Non-Streaming) call started", Instant.now());
 
                     try {
                         // Use non-streaming to get complete response, then clean it
-                        String fullResponse = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                            .system("Think briefly about the context and question in a <thinking> block (2-3 sentences max). " +
-                                    "Then provide your complete final answer in an <answer> block based on the provided context. " +
-                                    "Keep thinking concise to leave room for a full answer. " +
-                                    "Example: <thinking>Brief analysis</thinking><answer>Complete answer here</answer> " +
-                                    "If the context does not contain the answer, state that clearly inside the <answer> block.")
-                            .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
+                        String fullResponse = CompletableFuture.supplyAsync(() -> {
+                            String ragOnlySystemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the information provided. Restate the information in a clear and concise answer. If the information doesn't contain enough details, simply state that the information is not available. IMPORTANT: You MUST end your response with exactly: **<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**";
+                            
+                            return chatClient.prompt()
+                                .system(ragOnlySystemPrompt)
+                                .user(llmSummaryPrompt).call().content();
+                        }, this.timeoutExecutor)
                             .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                         
                         logger.info("[{}] LLM (RAG Only Non-Streaming) call finished", Instant.now());
@@ -254,7 +285,7 @@ public class RagService implements DisposableBean {
                 } else {
                     logger.info("No context found for RAG Only stream. Completing.");
                     if (statusListener != null) statusListener.onStatus("No context found, stream complete", 90);
-                    chunkConsumer.accept("I couldn't find relevant information in the knowledge base to answer your question.");
+                    chunkConsumer.accept("I couldn't find relevant information in the knowledge base to answer your question. (RAG Only)");
                     if (statusListener != null) statusListener.onStatus("COMPLETED", 100);
                 }
             }
@@ -281,14 +312,16 @@ public class RagService implements DisposableBean {
 
             if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
-                String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .system("Answer directly and concisely. Do not explain your reasoning or thought process.")
-                    .user(request.getMessage()).call().content(), this.timeoutExecutor)
+                String llmAnswer = CompletableFuture.supplyAsync(() -> {
+                    String pureLlmSystemPrompt = "You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(Pure LLM)</span>**'.";
+                    
+                    return chatClient.prompt()
+                        .system(pureLlmSystemPrompt)
+                        .user(request.getMessage()).call().content();
+                }, this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                // Clean reasoning tokens from response - COMMENTED OUT: Using structured prompting now
-                // llmAnswer = cleanRawLlmResponse(llmAnswer);
-                answer = "LLM Answer:\n" + llmAnswer + "\n\nSource: LLM only";
+                answer = "LLM Answer:\n" + llmAnswer;
                 source = "LLM";
 
             } else if (request.isIncludeLlmFallback()) { // RAG + LLM Fallback
@@ -297,20 +330,22 @@ public class RagService implements DisposableBean {
                 List<Document> docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 String contextText = formatDocumentsToContext(docs);
-                String llmPrompt = (contextText != null && !contextText.isEmpty()) 
-                    ? "Context:\n" + contextText + "\n\nUser Question:\n" + request.getMessage()
-                    : request.getMessage();
+                
+                // Use token-aware prompt validation
+                String systemPrompt = "Answer the question using the provided context and your own knowledge. " +
+                                    "If the context contains relevant information, use it. " +
+                                    "If the context doesn't contain the answer, use your general knowledge. " +
+                                    "Provide a comprehensive answer that combines both sources of information.";
+                String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
                 String sourceCode = (contextText != null && !contextText.isEmpty()) ? "RAG context + LLM" : "LLM only (no context found)";
                 
                 if (statusListener != null) statusListener.onStatus("Calling LLM with prompt", 70);
                 String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .system("Answer the question using the provided context. Be direct and concise.")
+                    .system("You are a helpful AI assistant. Use the provided context and expand on it using your vast knowledge to answer the question thoroughly with supporting information. Always end your response with '**<span style=\"color: #007bff; font-weight: bold;\">(RAG + LLM Fallback)</span>**'.")
                     .user(llmPrompt).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                // Clean reasoning tokens from response - COMMENTED OUT: Using structured prompting now
-                // llmAnswer = cleanRawLlmResponse(llmAnswer);
-                answer = llmAnswer + "\n\nSource: " + sourceCode;
+                answer = llmAnswer;
                 source = "LLM_FALLBACK";
 
             } else { // RAG Only
@@ -318,6 +353,13 @@ public class RagService implements DisposableBean {
                 CleanedQueryResult cleanedResult = cleanQueryWithLlmExtractConstraint(request.getMessage(), "RAG ONLY");
                 String cleanedPrompt = cleanedResult.cleanedQuery;
                 String lengthConstraint = cleanedResult.lengthConstraint;
+                
+                // Apply query expansion if enabled
+                if (queryExpansionController.isEnabled()) {
+                    if (statusListener != null) statusListener.onStatus("Expanding query for better retrieval", 18);
+                    cleanedPrompt = expandQueryWithLLM(cleanedPrompt);
+                }
+                
                 if (statusListener != null) statusListener.onStatus("Querying vector DB for relevant context", 20);
                 Query query = new Query(cleanedPrompt);
                 List<Document> docs = CompletableFuture.supplyAsync(() -> documentRetriever.retrieve(query), this.timeoutExecutor)
@@ -335,16 +377,14 @@ public class RagService implements DisposableBean {
                         llmSummaryPrompt = llmSummaryPromptBase;
                     }
                     String llmSummary = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                        .system("You may think through the question internally, but your response must contain ONLY the final answer based on the provided context. Do not show your reasoning, thinking process, or methodology. Do not include phrases like 'Looking at the context', 'Based on the information', 'Let me think', or any analytical commentary. Provide only the direct, factual answer. If the context doesn't contain the answer, simply state: 'The provided context does not contain information to answer this question.'")
+                                                        .system("You are a helpful AI assistant. Answer the user's question using ONLY the information provided. Restate the information in a clear and concise answer. If the information doesn't contain enough details, simply state that the information is not available. IMPORTANT: You MUST end your response with exactly: **<span style=\"color: #007bff; font-weight: bold;\">(RAG Only)</span>**")
                         .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
                         .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                    // Clean reasoning tokens from response - COMMENTED OUT: Using structured prompting now
-                    // llmSummary = cleanRawLlmResponse(llmSummary);
-                    answer = llmSummary + "\n\nSource: RAG context summarized by LLM";
+                    answer = llmSummary;
                     source = "RAG";
                 } else {
-                    answer = "I couldn't find relevant information in the knowledge base to answer your question.";
+                    answer = "I couldn't find relevant information in the knowledge base to answer your question. (RAG Only)";
                     source = "RAG_NO_CONTEXT";
                 }
             }
@@ -389,6 +429,12 @@ public class RagService implements DisposableBean {
                 if (lengthConstraint != null && !lengthConstraint.isEmpty()) {
                     logger.info("[RAW RAG] Length constraint extracted: {}", lengthConstraint);
                 }
+            }
+
+            // Query expansion for raw RAG
+            if (queryExpansionController.isEnabled()) {
+                logger.info("[RAW RAG] Expanding query for better retrieval");
+                searchQuery = expandQueryWithLLM(searchQuery);
             }
             
             logger.info("VECTOR SEARCH DEBUG - Query to search: '{}'", searchQuery);
@@ -464,31 +510,68 @@ public class RagService implements DisposableBean {
         }
     }
 
+    /**
+     * Estimates token count for a given text (rough approximation: 1 token ≈ 4 characters)
+     */
+    private int estimateTokens(String text) {
+        if (text == null) return 0;
+        return (int) Math.ceil(text.length() / 4.0);
+    }
+
+    /**
+     * Formats documents into context with token-aware limits to prevent LLM truncation
+     */
     private String formatDocumentsToContext(List<Document> docs) {
         if (docs == null || docs.isEmpty()) {
             return null;
         }
         
-        // Limit context size to save tokens for thinking + answer
-        final int MAX_CONTEXT_CHARS = 8000; // Reasonable limit to save tokens for response
+        // Use both character and token limits for better control
+        final int MAX_CONTEXT_CHARS = maxContextChars;
+        final int MIN_DOC_CHARS = minDocChars;
+        final int MAX_CONTEXT_TOKENS = maxContextTokens;
+        
         StringBuilder context = new StringBuilder();
+        int totalChars = 0;
+        int totalTokens = 0;
+        int docsAdded = 0;
         
         for (Document doc : docs) {
             String content = doc.getFormattedContent();
-            if (context.length() + content.length() + 4 > MAX_CONTEXT_CHARS) {
-                // Truncate the current document to fit within limit
-                int remainingChars = MAX_CONTEXT_CHARS - context.length() - 4;
-                if (remainingChars > 100) { // Only add if we have meaningful space left
-                    content = content.substring(0, remainingChars) + "...";
+            int contentLength = content.length();
+            int contentTokens = estimateTokens(content);
+            
+            // Check both character and token limits
+            boolean exceedsCharLimit = totalChars + contentLength + 4 > MAX_CONTEXT_CHARS;
+            boolean exceedsTokenLimit = totalTokens + contentTokens + 1 > MAX_CONTEXT_TOKENS;
+            
+            if (exceedsCharLimit || exceedsTokenLimit) {
+                // Try to fit a truncated version if we have enough space for meaningful content
+                int remainingChars = MAX_CONTEXT_CHARS - totalChars - 4;
+                int remainingTokens = MAX_CONTEXT_TOKENS - totalTokens - 1;
+                
+                if (remainingChars > MIN_DOC_CHARS && remainingTokens > 50) {
+                    // Truncate based on the more restrictive limit
+                    int maxChars = Math.min(remainingChars, remainingTokens * 4);
+                    content = content.substring(0, Math.min(maxChars, contentLength)) + "...";
                     context.append(content).append("\\n\\n");
+                    docsAdded++;
+                    logger.info("Truncated document {} to fit context limits (chars: {}, tokens: {})", 
+                               docsAdded, totalChars + content.length(), totalTokens + estimateTokens(content));
                 }
                 break; // Stop adding more documents
             }
+            
             context.append(content).append("\\n\\n");
+            totalChars += contentLength + 4; // +4 for "\\n\\n"
+            totalTokens += contentTokens + 1; // +1 for "\\n\\n"
+            docsAdded++;
         }
         
         String result = context.toString().trim();
-        logger.info("Context formatted: {} characters from {} documents", result.length(), docs.size());
+        int finalTokens = estimateTokens(result);
+        logger.info("Context formatted: {} characters ({} tokens) from {} documents (max chars: {}, max tokens: {})", 
+                   result.length(), finalTokens, docsAdded, MAX_CONTEXT_CHARS, MAX_CONTEXT_TOKENS);
         return result;
     }
 
@@ -567,6 +650,106 @@ public class RagService implements DisposableBean {
     }
 
     /**
+     * Expands a query using the LLM to generate synonyms and related terms.
+     * This improves retrieval quality by finding more relevant documents.
+     */
+    private String expandQueryWithLLM(String originalQuery) {
+        try {
+            logger.info("[QUERY EXPANSION] Expanding query: '{}'", originalQuery);
+            
+            String expansionPrompt = String.format(
+                "Generate 2-3 synonyms or related terms for the query: '%s'. " +
+                "Focus on technical terms, alternative phrasings, and related concepts. " +
+                "Return ONLY the expanded query with synonyms separated by spaces. " +
+                "Keep it concise and relevant. " +
+                "Example: 'spring boot' → 'spring boot springboot java framework'",
+                originalQuery
+            );
+            
+            String expandedQuery = CompletableFuture.supplyAsync(() -> {
+                return chatClient.prompt()
+                    .system("You are a query expansion assistant. Generate relevant synonyms and related terms to improve search results.")
+                    .user(expansionPrompt)
+                    .call()
+                    .content();
+            }, this.timeoutExecutor)
+            .get(30, TimeUnit.SECONDS); // Shorter timeout for expansion
+            
+            // Clean the response and combine with original query
+            String cleanedExpansion = expandedQuery.trim()
+                .replaceAll("\\s+", " ") // Normalize whitespace
+                .replaceAll("[^a-zA-Z0-9\\s]", ""); // Remove special characters except spaces
+            
+            String finalQuery = originalQuery + " " + cleanedExpansion;
+            logger.info("[QUERY EXPANSION] Expanded query: '{}' → '{}'", originalQuery, finalQuery);
+            
+            return finalQuery;
+            
+        } catch (TimeoutException te) {
+            logger.warn("[QUERY EXPANSION] Expansion timed out, using original query: {}", originalQuery);
+            return originalQuery;
+        } catch (Exception e) {
+            logger.warn("[QUERY EXPANSION] Expansion failed, using original query: {} - Error: {}", 
+                       originalQuery, e.getMessage());
+            return originalQuery;
+        }
+    }
+
+    /**
+     * Validates and adjusts prompt to ensure it stays within token limits
+     */
+    private String validateAndAdjustPrompt(String contextText, String userQuestion, String systemPrompt) {
+        // Estimate tokens for each component
+        int contextTokens = estimateTokens(contextText != null ? contextText : "");
+        int questionTokens = estimateTokens(userQuestion);
+        int systemTokens = estimateTokens(systemPrompt);
+        
+        // Reserve tokens for response and overhead
+        int reservedTokens = maxResponseTokens + 200; // 200 tokens for formatting overhead
+        
+        // Calculate total estimated tokens
+        int totalTokens = contextTokens + questionTokens + systemTokens + reservedTokens;
+        
+        logger.info("Token estimation - Context: {}, Question: {}, System: {}, Reserved: {}, Total: {} (max: {})", 
+                   contextTokens, questionTokens, systemTokens, reservedTokens, totalTokens, maxTotalTokens);
+        
+        // If we're within limits, return the original prompt
+        if (totalTokens <= maxTotalTokens) {
+            return contextText != null && !contextText.isEmpty() 
+                ? "Context:\n" + contextText + "\n\nUser Question:\n" + userQuestion
+                : userQuestion;
+        }
+        
+        // If we're over the limit, we need to reduce context
+        int excessTokens = totalTokens - maxTotalTokens;
+        logger.warn("Prompt exceeds token limit by {} tokens. Reducing context.", excessTokens);
+        
+        if (contextText != null && !contextText.isEmpty()) {
+            // Calculate how much context we can keep
+            int maxContextTokensAllowed = maxContextTokens - excessTokens;
+            int maxContextCharsAllowed = maxContextTokensAllowed * 4; // Rough conversion
+            
+            if (maxContextCharsAllowed > minDocChars) {
+                // Truncate context to fit within limits
+                String truncatedContext = contextText.length() > maxContextCharsAllowed 
+                    ? contextText.substring(0, maxContextCharsAllowed) + "..."
+                    : contextText;
+                
+                logger.info("Truncated context from {} to {} characters to fit token limits", 
+                           contextText.length(), truncatedContext.length());
+                
+                return "Context:\n" + truncatedContext + "\n\nUser Question:\n" + userQuestion;
+            } else {
+                // Context is too large, use question only
+                logger.warn("Context too large for token limits, using question only");
+                return userQuestion;
+            }
+        }
+        
+        return userQuestion;
+    }
+
+    /**
      * Simulate streaming by sending response in chunks to maintain consistent UX
      */
     private void simulateStreamingResponse(String response, Consumer<String> chunkConsumer) {
@@ -609,213 +792,37 @@ public class RagService implements DisposableBean {
     }
 
 
-    /**
-     * Clean streaming chunks to remove reasoning patterns from LLM
-     * COMMENTED OUT: No longer using real streaming, using structured prompting instead
-     */
-    /*
-    private String cleanStreamingChunk(String chunk) {
-        if (chunk == null || chunk.trim().isEmpty()) {
-            return chunk;
-        }
-        
-        // Skip chunks that contain reasoning patterns - exact patterns from logs
-        String lowerChunk = chunk.toLowerCase();
-        if (lowerChunk.contains("okay, let's try to figure out") || 
-            lowerChunk.contains("first, i need to scan") ||
-            lowerChunk.contains("looking through the context") ||
-            lowerChunk.contains("looking at the text") ||
-            lowerChunk.contains("let me check again") ||
-            lowerChunk.contains("i need to recall") ||
-            lowerChunk.contains("wait, here's a part") ||
-            lowerChunk.contains("wait, there's a section") ||
-            lowerChunk.contains("another part mentions") ||
-            lowerChunk.contains("another section says") ||
-            lowerChunk.contains("hmm, that might be") ||
-            lowerChunk.contains("that seems a bit") ||
-            lowerChunk.contains("that doesn't make sense") ||
-            lowerChunk.contains("maybe the context is") ||
-            lowerChunk.contains("alternatively, looking") ||
-            lowerChunk.contains("but wait, the user") ||
-            lowerChunk.contains("from general knowledge") ||
-            lowerChunk.contains("based on the provided") ||
-            lowerChunk.contains("according to the context") ||
-            lowerChunk.contains("in the context provided") ||
-            lowerChunk.contains("context says that") ||
-            lowerChunk.contains("the text mentions") ||
-            lowerChunk.contains("given the instructions") ||
-            lowerChunk.contains("since the context doesn't") ||
-            lowerChunk.contains("however, given that") ||
-            lowerChunk.contains("therefore, the answer") ||
-            lowerChunk.contains("okay,") || 
-            lowerChunk.contains("first,") ||
-            lowerChunk.contains("looking") ||
-            lowerChunk.contains("let me") ||
-            lowerChunk.contains("i need") ||
-            lowerChunk.contains("wait,") ||
-            lowerChunk.contains("hmm,") ||
-            lowerChunk.contains("based on") ||
-            lowerChunk.contains("according to") ||
-            lowerChunk.contains("the context") ||
-            lowerChunk.contains("from the") ||
-            lowerChunk.contains("in the") ||
-            lowerChunk.contains("given that") ||
-            lowerChunk.contains("since the") ||
-            lowerChunk.contains("however,") ||
-            lowerChunk.contains("therefore,") ||
-            lowerChunk.contains("alternatively") ||
-            lowerChunk.contains("but the") ||
-            lowerChunk.contains("so the") ||
-            lowerChunk.contains("thus") ||
-            lowerChunk.contains("hence") ||
-            lowerChunk.contains("consequently")) {
-            return ""; // Skip these chunks entirely
-        }
-        
-        return chunk;
-    }
-    */
+
+
+
 
     /**
-     * Clean raw LLM response by removing reasoning patterns from LLM
-     * COMMENTED OUT: No longer needed with structured prompting approach
-     */
-    /*
-    private String cleanRawLlmResponse(String rawResponse) {
-        if (rawResponse == null || rawResponse.trim().isEmpty()) {
-            return rawResponse;
-        }
-        
-        String cleaned = rawResponse.trim();
-        
-        // If response starts with reasoning, try to find the actual answer
-        if (cleaned.toLowerCase().startsWith("okay") || 
-            cleaned.toLowerCase().startsWith("first") ||
-            cleaned.toLowerCase().startsWith("looking") ||
-            cleaned.toLowerCase().startsWith("let me") ||
-            cleaned.toLowerCase().startsWith("i need") ||
-            cleaned.toLowerCase().startsWith("based on") ||
-            cleaned.toLowerCase().startsWith("according to")) {
-            
-            // Split by sentences and find first non-reasoning sentence
-            String[] sentences = cleaned.split("\\. ");
-            StringBuilder result = new StringBuilder();
-            boolean foundAnswer = false;
-            
-            for (String sentence : sentences) {
-                String lowerSentence = sentence.toLowerCase();
-                if (!lowerSentence.contains("okay") && 
-                    !lowerSentence.contains("first") &&
-                    !lowerSentence.contains("looking") &&
-                    !lowerSentence.contains("let me") &&
-                    !lowerSentence.contains("i need") &&
-                    !lowerSentence.contains("wait") &&
-                    !lowerSentence.contains("hmm") &&
-                    !lowerSentence.contains("based on") &&
-                    !lowerSentence.contains("according to") &&
-                    !lowerSentence.contains("the context") &&
-                    !lowerSentence.contains("from the") &&
-                    !lowerSentence.contains("in the") &&
-                    !lowerSentence.contains("given that") &&
-                    !lowerSentence.contains("since the") &&
-                    !lowerSentence.contains("however") &&
-                    !lowerSentence.contains("therefore") &&
-                    !lowerSentence.contains("alternatively") &&
-                    !lowerSentence.contains("but the") &&
-                    sentence.trim().length() > 10) {
-                    result.append(sentence.trim());
-                    if (!sentence.endsWith(".") && !sentence.endsWith("!") && !sentence.endsWith("?")) {
-                        result.append(".");
-                    }
-                    result.append(" ");
-                    foundAnswer = true;
-                }
-            }
-            
-            if (foundAnswer) {
-                cleaned = result.toString().trim();
-            } else {
-                return "The provided context does not contain information to answer this question.";
-            }
-        }
-        
-        // Remove any remaining reasoning patterns
-        cleaned = cleaned.replaceAll("(Okay, let's.*?\\.|First, I.*?\\.|Looking.*?\\.|Let me.*?\\.|I need.*?\\.|Wait.*?\\.|Hmm.*?\\.|Based on.*?\\.|According to.*?\\.|The context.*?\\.|From the.*?\\.|In the.*?\\.|Given that.*?\\.|Since the.*?\\.|However.*?\\.|Therefore.*?\\.|Alternatively.*?\\.|But the.*?\\.)", "").trim();
-        
-        // Remove multiple spaces and clean up
-        cleaned = cleaned.replaceAll("\\s{2,}", " ").trim();
-        
-        // If the response is mostly reasoning with little actual content, return a clean error
-        if (cleaned.length() < 20 || cleaned.toLowerCase().contains("context does not") || 
-            cleaned.toLowerCase().contains("no information") || 
-            cleaned.toLowerCase().contains("can't find")) {
-            return "The provided context does not contain information to answer this question.";
-        }
-        
-        return cleaned;
-    }
-    */
-
-    /**
-     * Extracts the content from the <answer> tag in the LLM's response.
+     * Extract the final answer from LLM response, handling Qwen3 thinking mode
      */
     private String extractAnswer(String llmResponse) {
         if (llmResponse == null || llmResponse.trim().isEmpty()) {
             return "The provided context does not contain information to answer this question.";
         }
         
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("<answer>(.*?)</answer>", java.util.regex.Pattern.DOTALL);
-        java.util.regex.Matcher matcher = pattern.matcher(llmResponse);
+        String response = llmResponse.trim();
         
-        if (matcher.find()) {
-            String answer = matcher.group(1).trim();
-            logger.info("Extracted answer: {}", answer);
-            return answer;
-        }
-        
-        logger.warn("Could not find <answer> tag in LLM response. Raw response: {}", llmResponse);
-        
-        // Enhanced fallback: Try to find text after </thinking> tag first
-        int thinkingEndIndex = llmResponse.lastIndexOf("</thinking>");
-        if (thinkingEndIndex != -1) {
-            String potentialAnswer = llmResponse.substring(thinkingEndIndex + "</thinking>".length()).trim();
-            if (!potentialAnswer.isEmpty() && potentialAnswer.length() > 10) {
-                logger.warn("Found potential answer after </thinking> tag: {}", potentialAnswer);
-                return potentialAnswer;
-            }
-        }
-        
-        // If no thinking tags, use the raw response but clean it
-        String cleaned = llmResponse.trim();
-        
-        // Remove common thinking patterns if they appear at the start
-        if (cleaned.toLowerCase().startsWith("thinking:") || cleaned.toLowerCase().startsWith("let me think") || 
-            cleaned.toLowerCase().startsWith("okay,") || cleaned.toLowerCase().startsWith("first,")) {
-            
-            // Try to find the actual answer after thinking content
-            String[] lines = cleaned.split("\n");
-            StringBuilder result = new StringBuilder();
-            boolean foundAnswer = false;
-            
-            for (String line : lines) {
-                String lowerLine = line.toLowerCase().trim();
-                // Skip obvious thinking lines
-                if (!lowerLine.startsWith("thinking:") && !lowerLine.startsWith("let me") && 
-                    !lowerLine.startsWith("okay,") && !lowerLine.startsWith("first,") &&
-                    !lowerLine.startsWith("looking") && !lowerLine.contains("i need to") &&
-                    line.trim().length() > 10) {
-                    result.append(line.trim()).append(" ");
-                    foundAnswer = true;
+        // Handle Qwen3 thinking mode - extract content after <think>...</think> blocks
+        if (response.contains("<think>")) {
+            // Find the last </think> tag
+            int lastThinkEnd = response.lastIndexOf("</think>");
+            if (lastThinkEnd != -1) {
+                // Extract everything after the last </think> tag
+                String afterThinking = response.substring(lastThinkEnd + "</think>".length()).trim();
+                if (!afterThinking.isEmpty()) {
+                    logger.info("Extracted answer after Qwen3 thinking block: {}", 
+                               afterThinking.substring(0, Math.min(100, afterThinking.length())));
+                    return afterThinking;
                 }
             }
-            
-            if (foundAnswer) {
-                cleaned = result.toString().trim();
-            }
         }
         
-        // If still no good answer, return the raw response (better than nothing)
-        return cleaned.isEmpty() ? "Could not extract a clear answer. Please try rephrasing your question." : cleaned;
+        // If no thinking tags found, return the response as-is
+        return response;
     }
 
     /**

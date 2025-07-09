@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Tanzu RAG Chat</title>
+    <style>
+        body {
+            font-family: system-ui, sans-serif;
+            background: linear-gradient(135deg, #e3ecfc 0%, #f7f8fa 100%);
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: #fff;
+            border-radius: 14px;
+            box-shadow: 0 4px 24px rgba(60,80,180,0.07);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            border: 1.5px solid #e2e6f0;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .login-header h1 {
+            color: #4b6cb7;
+            margin: 0 0 10px 0;
+            font-size: 2em;
+        }
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .form-group label {
+            font-weight: 600;
+            color: #495057;
+        }
+        .form-group input {
+            padding: 12px;
+            border: 1px solid #c7d0e0;
+            border-radius: 6px;
+            font-size: 1em;
+            background: #f7faff;
+        }
+        .form-group input:focus {
+            outline: none;
+            border: 1.5px solid #4b6cb7;
+        }
+        .login-button {
+            background: linear-gradient(90deg, #4b6cb7 0%, #182848 100%);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 12px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .login-button:hover {
+            background: linear-gradient(90deg, #182848 0%, #4b6cb7 100%);
+        }
+        .error-message {
+            color: #d73a49;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .error-message.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>Tanzu RAG Chat</h1>
+            <p>Please sign in to continue</p>
+        </div>
+        
+        <div class="error-message" th:if="${param.error}" th:class="${param.error ? 'error-message show' : 'error-message'}">
+            Invalid username or password.
+        </div>
+        
+        <form class="login-form" th:action="@{/login}" method="post">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required autocomplete="username">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
+            </div>
+            
+            <button type="submit" class="login-button">Sign In</button>
+        </form>
+    </div>
+</body>
+</html> 

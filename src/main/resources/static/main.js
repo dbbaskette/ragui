@@ -28,10 +28,48 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
         console.log("[ConfigPanel] config is falsy, returning null.");
         return null;
     }
+    
+    // Add state for query expansion toggle
+    const [queryExpansionEnabled, setQueryExpansionEnabled] = React.useState(false);
+    const [isLoading, setIsLoading] = React.useState(false);
+    
+    // Load current query expansion state on mount
+    React.useEffect(() => {
+        fetch('/api/query-expansion')
+            .then(res => res.json())
+            .then(data => setQueryExpansionEnabled(data.enabled))
+            .catch(err => console.error('Failed to load query expansion state:', err));
+    }, []);
+    
+    // Handle toggle change
+    const handleQueryExpansionToggle = async (enabled) => {
+        setIsLoading(true);
+        try {
+            const response = await fetch('/api/query-expansion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                setQueryExpansionEnabled(data.enabled);
+                console.log('Query expansion updated:', data.enabled);
+            } else {
+                console.error('Failed to update query expansion state');
+            }
+        } catch (err) {
+            console.error('Error updating query expansion:', err);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
     // Exclude app.version from the config entries since it's shown in the header
     const configEntries = Object.entries(config).filter(([key]) =>
         !['app.version', 'MAIN_JS_VERSION', 'last_prompt'].includes(key)
     );
+    
     return React.createElement("div", { className: "config-panel-overlay" },
         React.createElement("div", { className: "config-panel" },
             React.createElement("div", { className: "config-header" },
@@ -46,6 +84,56 @@ function ConfigPanel({ config, version, onClose, lastPrompt }) {
                 React.createElement("span", { className: "config-value" }, (config && config["app.version"]) || version || "unknown"),
                 React.createElement("span", { style: { marginLeft: 12 } }, "Main.js Version: "),
                 React.createElement("span", { className: "config-value" }, typeof MAIN_JS_VERSION !== "undefined" ? MAIN_JS_VERSION : "unknown")
+            ),
+            // Add Query Expansion Toggle Section
+            React.createElement("div", { className: "config-section", style: { marginBottom: "20px", padding: "15px", background: "#f8f9fa", borderRadius: "8px", border: "1px solid #e9ecef" } },
+                React.createElement("h4", { style: { margin: "0 0 10px 0", color: "#495057" } }, "RAG Settings"),
+                React.createElement("div", { className: "toggle-item", style: { display: "flex", alignItems: "center", justifyContent: "space-between" } },
+                    React.createElement("div", null,
+                        React.createElement("span", { style: { fontWeight: "500", color: "#495057" } }, "Query Expansion"),
+                        React.createElement("div", { style: { fontSize: "0.85em", color: "#6c757d", marginTop: "2px" } }, 
+                            "Use LLM to expand queries with synonyms for better retrieval"
+                        )
+                    ),
+                    React.createElement("label", { className: "toggle-switch", style: { position: "relative", display: "inline-block", width: "50px", height: "24px" } },
+                        React.createElement("input", {
+                            type: "checkbox",
+                            checked: queryExpansionEnabled,
+                            onChange: (e) => handleQueryExpansionToggle(e.target.checked),
+                            disabled: isLoading,
+                            style: { opacity: 0, width: 0, height: 0 }
+                        }),
+                        React.createElement("span", { 
+                            className: "slider",
+                            style: {
+                                position: "absolute",
+                                cursor: isLoading ? "not-allowed" : "pointer",
+                                top: 0,
+                                left: 0,
+                                right: 0,
+                                bottom: 0,
+                                backgroundColor: queryExpansionEnabled ? "#4b6cb7" : "#ccc",
+                                transition: "0.3s",
+                                borderRadius: "24px",
+                                opacity: isLoading ? 0.6 : 1
+                            }
+                        }),
+                        React.createElement("span", {
+                            style: {
+                                position: "absolute",
+                                content: '""',
+                                height: "18px",
+                                width: "18px",
+                                left: queryExpansionEnabled ? "26px" : "3px",
+                                bottom: "3px",
+                                backgroundColor: "white",
+                                transition: "0.3s",
+                                borderRadius: "50%",
+                                boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
+                            }
+                        })
+                    )
+                )
             ),
             React.createElement("div", { className: "config-content" },
                 configEntries.map(([key, value]) =>

@@ -1,207 +1,159 @@
 #!/bin/bash
-# release.sh - Increment version in pom.xml, commit, push, and tag release
-# Usage: ./release.sh [--release VERSION] [--jar-only]
-# Examples:
-#   ./release.sh                  # Auto-increment patch version
-#   ./release.sh --release 1.0.2  # Set specific version
-#   ./release.sh --jar-only       # Skip version increment, just build and push JAR
+
+# ==============================================================================
+# RELEASE SCRIPT WRAPPER
+# ==============================================================================
+# This is a minimal wrapper that downloads and executes the latest release script
+# All functionality is contained in .release-exec
 
 set -e
 
-# Parse command line arguments
-RELEASE_VERSION=""
-JAR_ONLY=false
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --release)
-      RELEASE_VERSION="$2"
-      shift 2
-      ;;
-    --jar-only)
-      JAR_ONLY=true
-      shift
-      ;;
-    -h|--help)
-      echo "Usage: $0 [--release VERSION] [--jar-only]"
-      echo ""
-      echo "Options:"
-      echo "  --release VERSION    Set specific version instead of auto-incrementing"
-      echo "  --jar-only          Skip version increment, just build and push JAR"
-      echo "  -h, --help          Show this help message"
-      echo ""
-      echo "Examples:"
-      echo "  $0                    # Auto-increment patch version"
-      echo "  $0 --release 1.0.2    # Set specific version"
-      echo "  $0 --jar-only         # Just build and push JAR for current version"
-      exit 0
-      ;;
-    *)
-      echo "Unknown option: $1"
-      echo "Use --help for usage information"
-      exit 1
-      ;;
-  esac
-done
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# Validate release version format if provided
-if [[ -n "$RELEASE_VERSION" ]]; then
-  if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: Release version must be in format x.y.z (e.g., 1.0.2)"
-    exit 1
-  fi
-fi
+print_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
 
-# 1. Get current branch
-git_branch=$(git rev-parse --abbrev-ref HEAD)
-echo "Current git branch: $git_branch"
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
 
-# 2. Get the main artifactId and its version from pom.xml (not the parent)
-# Auto-detect the main artifactId (first <artifactId> outside <parent> block)
-main_artifact_id=$(awk '
-  /<parent>/ {in_parent=1}
-  /<\/parent>/ {in_parent=0; next}
-  in_parent {next}
-  /<artifactId>/ && !found {
-    print $0
-    found=1
-  }
-' pom.xml | sed -n 's:.*<artifactId>\([^<]*\)</artifactId>.*:\1:p')
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
 
-if [[ -z "$main_artifact_id" ]]; then
-  echo "Could not auto-detect main artifactId from pom.xml"
-  exit 1
-fi
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
 
-# Find the <version> that comes immediately after <artifactId>$main_artifact_id</artifactId>
-current_version=$(awk '/<artifactId>'"$main_artifact_id"'<\/artifactId>/{getline; while (!/<version>/) getline; gsub(/.*<version>|<\/version>.*/, ""); print $0; exit}' pom.xml)
-echo "Main artifactId: $main_artifact_id"
-echo "Current version: $current_version"
+# ==============================================================================
+# SELF-UPDATE MECHANISM
+# ==============================================================================
 
-# 3. Handle JAR-only mode
-if [[ "$JAR_ONLY" == true ]]; then
-  echo "JAR-only mode: Using current version $current_version"
-  new_version="$current_version"
-  
-  # Check if we're up to date with remote
-  git fetch
-  if git diff --quiet HEAD origin/$git_branch; then
-    echo "✅ Repository is up to date with remote."
-  else
-    echo "⚠️  Warning: Local branch has changes compared to remote."
-    echo "Consider committing and pushing changes before creating release."
-    echo -n "Continue anyway? [y/N]: "
-    read continue_answer
-    if [[ ! "$continue_answer" =~ ^[Yy]$ ]]; then
-      echo "Aborted by user."
-      exit 0
+download_latest_script() {
+    local exec_script="$(pwd)/.release-exec"
+    local repo_url="https://github.com/dbbaskette/release"
+    
+    print_info "Downloading latest version from $repo_url..."
+    
+    # Download using curl
+    if curl -sL "$repo_url/raw/main/.release-exec" > "$exec_script" 2>/dev/null; then
+        # Check if the file was actually downloaded (not empty)
+        if [[ -s "$exec_script" ]]; then
+            # Make it executable
+            chmod +x "$exec_script"
+            print_success "Downloaded latest version as $exec_script"
+            return 0
+        else
+            print_error "Downloaded file is empty"
+            rm -f "$exec_script"
+            return 1
+        fi
+    else
+        print_error "Failed to download from GitHub"
+        return 1
     fi
-  fi
-  
-  # Skip to JAR creation
-  skip_version_update=true
-else
-  skip_version_update=false
-fi
+}
 
-# 4. Determine new version (if not JAR-only mode)
-if [[ "$skip_version_update" == false ]]; then
-  if [[ -n "$RELEASE_VERSION" ]]; then
-    new_version="$RELEASE_VERSION"
-    echo "Setting version to: $new_version (specified via --release flag)"
-  else
-    # Increment patch version (x.y.z -> x.y.$((z+1)))
-    IFS='.' read -r major minor patch <<< "$current_version"
-    if [[ -z "$patch" ]]; then
-      echo "Could not parse version from pom.xml"
-      exit 1
+# ==============================================================================
+# GITIGNORE MANAGEMENT
+# ==============================================================================
+
+update_gitignore() {
+    local gitignore_file=".gitignore"
+    local release_sh="release.sh"
+    local release_exec=".release-exec"
+    
+    # Create .gitignore if it doesn't exist
+    if [[ ! -f "$gitignore_file" ]]; then
+        touch "$gitignore_file"
+        print_info "Created .gitignore file"
     fi
-    next_patch=$((patch+1))
-    new_version="$major.$minor.$next_patch"
-    echo "Bumping version to: $new_version (auto-incremented)"
-  fi
-
-  echo -n "Proceed with release v$new_version? [y/N]: "
-  read answer
-  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
-    echo "Aborted by user. No changes made."
-    exit 0
-  fi
-
-  # 5. Update only the correct <version> tag in pom.xml (the one after <artifactId>$main_artifact_id</artifactId>)
-  awk -v aid="$main_artifact_id" -v newver="$new_version" '
-    BEGIN {found=0}
-    /<artifactId>/ && $0 ~ aid {
-      found=1
-      print
-      next
-    }
-    found && /<version>/ {
-      sub(/<version>[^<]+<\/version>/, "<version>" newver "</version>")
-      found=0
-    }
-    {print}
-  ' pom.xml > pom.xml.tmp && mv pom.xml.tmp pom.xml
-
-  echo "pom.xml updated."
-
-  # 6. Git add, commit, push (only if there are changes)
-  if git diff --quiet; then
-    echo "No changes to commit."
-  else
-    git add pom.xml
-    git add .
-    read -p "Enter commit message: " commit_msg
-    if [ -z "$commit_msg" ]; then
-      commit_msg="Release v$new_version"
+    
+    # Check if entries already exist
+    local has_release_sh=$(grep -q "^$release_sh$" "$gitignore_file" && echo "yes" || echo "no")
+    local has_release_exec=$(grep -q "^$release_exec$" "$gitignore_file" && echo "yes" || echo "no")
+    
+    # Add entries if they don't exist
+    if [[ "$has_release_sh" == "no" ]]; then
+        echo "$release_sh" >> "$gitignore_file"
+        print_info "Added $release_sh to .gitignore"
     fi
-    git commit -m "$commit_msg"
-    git push
-    echo "Code committed and pushed."
-  fi
+    
+    if [[ "$has_release_exec" == "no" ]]; then
+        echo "$release_exec" >> "$gitignore_file"
+        print_info "Added $release_exec to .gitignore"
+    fi
+}
 
-  # 7. Tag the release (only if tag doesn't exist)
-  if git tag -l | grep -q "^v$new_version$"; then
-    echo "Tag v$new_version already exists."
-  else
-    git tag "v$new_version"
-    git push origin "v$new_version"
-    echo "Release tagged as v$new_version and pushed."
-  fi
-fi
+# ==============================================================================
+# MAIN EXECUTION
+# ==============================================================================
 
-# 8. Always offer to create/update GitHub release and upload JAR
-echo -n "Would you like to create/update GitHub release and upload the JAR? [y/N]: "
-read gh_release_answer
-if [[ "$gh_release_answer" =~ ^[Yy]$ ]]; then
-  echo "Building JAR with mvn clean package..."
-  mvn clean package -q
-  JAR_PATH="target/${main_artifact_id}-$new_version.jar"
-  if [[ ! -f "$JAR_PATH" ]]; then
-    echo "JAR file $JAR_PATH not found! Aborting release upload."
-    exit 1
-  fi
-  echo "JAR built successfully: $JAR_PATH"
-  
-  # Check if GitHub CLI is available
-  if ! command -v gh &> /dev/null; then
-    echo "GitHub CLI (gh) not found. Please install it to upload releases."
-    echo "JAR is available at: $JAR_PATH"
-    exit 1
-  fi
-  
-  echo "Creating/updating GitHub release v$new_version and uploading $JAR_PATH..."
-  # Create release if not exists, else update assets
-  if ! gh release view "v$new_version" >/dev/null 2>&1; then
-    gh release create "v$new_version" "$JAR_PATH" --title "Release v$new_version" --notes "Release $new_version"
-    echo "✅ GitHub release v$new_version created with JAR."
-  else
-    gh release upload "v$new_version" "$JAR_PATH" --clobber
-    echo "✅ GitHub release v$new_version updated with new JAR."
-  fi
-else
-  echo "Skipping GitHub release creation."
-  # Still show where the JAR would be
-  echo "JAR would be built at: target/${main_artifact_id}-$new_version.jar"
-fi
+main() {
+    local exec_script="$(pwd)/.release-exec"
+    
+    # Update .gitignore to exclude release scripts
+    update_gitignore
+    
+    # Check if we already have the execution script
+    if [[ -f "$exec_script" ]]; then
+        print_info "Found existing script: $exec_script"
+        print_info "Checking permissions..."
+        ls -la "$exec_script"
+        
+        # Check if file is empty or not executable
+        if [[ ! -s "$exec_script" ]] || [[ ! -x "$exec_script" ]]; then
+            print_warning "File is empty or not executable, removing and downloading fresh..."
+            rm -f "$exec_script"
+            if download_latest_script; then
+                print_info "Executing downloaded version..."
+                exec "$exec_script" "$@"
+            else
+                print_error "Failed to download script. Cannot continue."
+                exit 1
+            fi
+        else
+            print_info "Executing latest version..."
+            exec "$exec_script" "$@"
+        fi
+    elif [[ -f ".release-exec" ]]; then
+        print_info "Found script in current directory: .release-exec"
+        print_info "Checking permissions..."
+        ls -la ".release-exec"
+        
+        # Check if file is empty or not executable
+        if [[ ! -s ".release-exec" ]] || [[ ! -x ".release-exec" ]]; then
+            print_warning "File is empty or not executable, removing and downloading fresh..."
+            rm -f ".release-exec"
+            if download_latest_script; then
+                print_info "Executing downloaded version..."
+                exec "$exec_script" "$@"
+            else
+                print_error "Failed to download script. Cannot continue."
+                exit 1
+            fi
+        else
+            print_info "Executing latest version..."
+            exec "./.release-exec" "$@"
+        fi
+    else
+        print_info "No existing script found. Downloading latest version..."
+        if download_latest_script; then
+            print_info "Checking permissions..."
+            ls -la "$exec_script"
+            print_info "Executing downloaded version..."
+            exec "$exec_script" "$@"
+        else
+            print_error "Failed to download script. Cannot continue."
+            exit 1
+        fi
+    fi
+}
 
-echo "🎉 Release process complete!"
+main "$@"

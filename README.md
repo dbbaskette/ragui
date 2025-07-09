@@ -46,6 +46,22 @@ RAGUI is a Spring Boot application that provides a web-based user interface for 
 
 The application requires connection details for the PostgreSQL database and the OpenAI API key. These can be configured in `src/main/resources/application.properties` for local development or through environment variables for cloud deployments.
 
+#### Secure Credentials
+
+For security, default user credentials are now managed through a non-tracked properties file. The build process handles this automatically:
+
+**Option 1: Environment Variables (Recommended)**
+```bash
+export DEFAULT_USERNAME=your_username
+export DEFAULT_PASSWORD=your_secure_password
+./build-secure.sh
+```
+
+**Option 2: Manual Configuration**
+1. Copy the template: `cp src/main/resources/application-secure.properties.template src/main/resources/application-secure.properties`
+2. Edit the file with your credentials
+3. Run: `./build-secure.sh`
+
 **`application.properties` example:**
 ```properties
 # PostgreSQL Configuration
@@ -69,11 +85,18 @@ The application exposes several REST endpoints for interacting with the RAG serv
 
 ## Building and Running
 
+### Local Development
 To run the application locally:
 ```bash
 ./mvnw spring-boot:run
 ```
 The application will be available at `http://localhost:8080`.
+
+### Secure Build
+For production builds with secure credentials:
+```bash
+./build-secure.sh
+```
 
 ## Deployment
 
@@ -82,6 +105,12 @@ Use the `deploy.sh` script for streamlined build and deployment:
 ```bash
 ./deploy.sh          # Build and deploy
 ./deploy.sh --help   # See all options
+```
+
+### Secure Deployment
+For deployments with secure credentials:
+```bash
+./deploy-secure.sh   # Build and deploy with secure credentials
 ```
 
 ### Advanced Deployment

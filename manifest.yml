@@ -2,7 +2,7 @@
 applications:
 - name: ragui-test
   random-route: true
-  path: target/ragui-1.0.2.jar
+  path: target/ragui-2.0.2.jar
   memory: 2G
   disk_quota: 2G
   instances: 1
@@ -18,3 +18,4 @@ applications:
     - chat-model
     #- chat-mistral-vision
     - embed-model
+    - messaging-c856b29a-1c7e-4fd5-ab3b-0633b90869cc
