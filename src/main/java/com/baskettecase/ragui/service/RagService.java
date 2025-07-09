@@ -40,9 +40,6 @@ public class RagService implements DisposableBean {
     @Value("${ragui.debug.skip-query-cleaning:false}")
     private boolean skipQueryCleaning;
 
-    @Value("${ragui.debug.enable-reasoning:false}")
-    private boolean enableReasoning;
-
     @Value("${ragui.context.max-chars:6000}")
     private int maxContextChars;
 
@@ -75,8 +72,8 @@ public class RagService implements DisposableBean {
             .vectorStore(vectorStore)
             .build();
         this.timeoutExecutor = Executors.newCachedThreadPool();
-        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, enable-reasoning: {}, max-context-chars: {}, min-doc-chars: {}, token-limits: {}/{}/{}, and newCachedThreadPool for timeoutExecutor.", 
-                   similarityThreshold, topK, skipQueryCleaning, enableReasoning, maxContextChars, minDocChars, maxContextTokens, maxResponseTokens, maxTotalTokens);
+        logger.info("RagService initialized with similarity threshold: {}, top-K: {}, skip-query-cleaning: {}, max-context-chars: {}, min-doc-chars: {}, token-limits: {}/{}/{}, and newCachedThreadPool for timeoutExecutor.", 
+                   similarityThreshold, topK, skipQueryCleaning, maxContextChars, minDocChars, maxContextTokens, maxResponseTokens, maxTotalTokens);
     }
 
     public interface RagStatusListener {
@@ -96,16 +93,12 @@ public class RagService implements DisposableBean {
                 logger.debug("Using Pure LLM mode for stream: {}", request.getMessage());
                 logger.info("[{}] LLM (Pure) call started", Instant.now());
                 
-                                // Use non-streaming call with direct prompting for quality
+                                                // Use non-streaming call with direct prompting for quality
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
-                                            String systemPrompt = enableReasoning ? 
-                        "Provide a clear, direct answer to the user's question. Be comprehensive and complete in your response." :
-                        "/no_think Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete in your response.";
-                        
                         return chatClient.prompt()
-                            .system(systemPrompt)
+                            .system("Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete in your response.")
                             .user(request.getMessage())
                             .call()
                             .content();
@@ -157,16 +150,7 @@ public class RagService implements DisposableBean {
                 String contextText = formatDocumentsToContext(docs);
 
                 // Use token-aware prompt validation
-                String systemPrompt = enableReasoning ? 
-                    "Answer the question using the provided context and your own knowledge. " +
-                    "If the context contains relevant information, use it. " +
-                    "If the context doesn't contain the answer, use your general knowledge. " +
-                    "Provide a comprehensive answer that combines both sources of information." :
-                    "/no_think Answer the question using the provided context and your own knowledge. " +
-                    "If the context contains relevant information, use it. " +
-                    "If the context doesn't contain the answer, use your general knowledge. " +
-                    "Provide a comprehensive answer that combines both sources of information. " +
-                    "Do not include any reasoning, analysis, or thinking process.";
+                String systemPrompt = "You are a helpful AI assistant. Use the provided context and your knowledge to answer the user's question directly and clearly.";
                 
                 String llmPrompt = validateAndAdjustPrompt(contextText, request.getMessage(), systemPrompt);
                 
@@ -182,19 +166,8 @@ public class RagService implements DisposableBean {
                 String llmResponse;
                 try {
                     llmResponse = CompletableFuture.supplyAsync(() -> {
-                        String fallbackSystemPrompt = enableReasoning ? 
-                            "Answer the question using the provided context and your own knowledge. " +
-                            "If the context contains relevant information, use it. " +
-                            "If the context doesn't contain the answer, use your general knowledge. " +
-                            "Provide a comprehensive answer that combines both sources of information." :
-                            "/no_think Answer the question using the provided context and your own knowledge. " +
-                            "If the context contains relevant information, use it. " +
-                            "If the context doesn't contain the answer, use your general knowledge. " +
-                            "Provide a comprehensive answer that combines both sources of information. " +
-                            "Do not include any reasoning, analysis, or thinking process.";
-                        
                         return chatClient.prompt()
-                            .system(fallbackSystemPrompt)
+                            .system("You are a helpful AI assistant. Use the provided context and your knowledge to answer the user's question directly and clearly.")
                             .user(llmPrompt)
                             .call()
                             .content();
@@ -262,11 +235,7 @@ public class RagService implements DisposableBean {
                     if (statusListener != null) statusListener.onStatus("Calling LLM to analyze context (non-streaming for clean output)", 70);
                     
                     // Use token-aware prompt validation for RAG Only mode
-                    String systemPrompt = "Answer the question using ONLY the information provided in the context. " +
-                                        "Do not include any reasoning, analysis, or thinking process. " +
-                                        "Provide a direct, factual answer based on the context. " +
-                                        "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
-                                        "Keep your response concise and to the point.";
+                    String systemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context.";
                     
                     String basePrompt = validateAndAdjustPrompt(contextText, cleanedPrompt, systemPrompt);
                     
@@ -284,15 +253,7 @@ public class RagService implements DisposableBean {
                     try {
                         // Use non-streaming to get complete response, then clean it
                         String fullResponse = CompletableFuture.supplyAsync(() -> {
-                            String ragOnlySystemPrompt = enableReasoning ? 
-                                "Answer the question using ONLY the information provided in the context. " +
-                                "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
-                                "Keep your response concise and to the point." :
-                                "/no_think Answer the question using ONLY the information provided in the context. " +
-                                "Do not include any reasoning, analysis, or thinking process. " +
-                                "Provide a direct, factual answer based on the context. " +
-                                "If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' " +
-                                "Keep your response concise and to the point.";
+                            String ragOnlySystemPrompt = "You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context.";
                             
                             return chatClient.prompt()
                                 .system(ragOnlySystemPrompt)
@@ -303,7 +264,7 @@ public class RagService implements DisposableBean {
                         logger.info("[{}] LLM (RAG Only Non-Streaming) call finished", Instant.now());
                         
                         // Clean the response to remove any reasoning that slipped through
-                        String cleanedResponse = extractAnswer(fullResponse, true); // true for RAG Only mode
+                        String cleanedResponse = extractAnswer(fullResponse);
                         logger.info("RAG Only cleaned response: {}", cleanedResponse);
                         
                         // Simulate streaming to maintain consistent UX with other modes
@@ -350,9 +311,7 @@ public class RagService implements DisposableBean {
             if (request.isUsePureLlm()) {
                 if (statusListener != null) statusListener.onStatus("Calling LLM (no RAG)", 30);
                 String llmAnswer = CompletableFuture.supplyAsync(() -> {
-                    String pureLlmSystemPrompt = enableReasoning ? 
-                        "Provide a clear, direct answer to the user's question. Be comprehensive and complete." :
-                        "/no_think Provide a clear, direct answer to the user's question. Do not include any reasoning, analysis, or thinking process. Be comprehensive and complete.";
+                    String pureLlmSystemPrompt = "You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge.";
                     
                     return chatClient.prompt()
                         .system(pureLlmSystemPrompt)
@@ -360,8 +319,6 @@ public class RagService implements DisposableBean {
                 }, this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                // Clean reasoning tokens from response - COMMENTED OUT: Using structured prompting now
-                // llmAnswer = cleanRawLlmResponse(llmAnswer);
                 answer = "LLM Answer:\n" + llmAnswer + "\n\nSource: LLM only";
                 source = "LLM";
 
@@ -382,12 +339,10 @@ public class RagService implements DisposableBean {
                 
                 if (statusListener != null) statusListener.onStatus("Calling LLM with prompt", 70);
                 String llmAnswer = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                    .system("Answer the question using the provided context. Be direct and concise.")
+                    .system("You are a helpful AI assistant. Use the provided context and your knowledge to answer the user's question directly and clearly.")
                     .user(llmPrompt).call().content(), this.timeoutExecutor)
                     .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                // Clean reasoning tokens from response - COMMENTED OUT: Using structured prompting now
-                // llmAnswer = cleanRawLlmResponse(llmAnswer);
                 answer = llmAnswer + "\n\nSource: " + sourceCode;
                 source = "LLM_FALLBACK";
 
@@ -420,12 +375,10 @@ public class RagService implements DisposableBean {
                         llmSummaryPrompt = llmSummaryPromptBase;
                     }
                     String llmSummary = CompletableFuture.supplyAsync(() -> chatClient.prompt()
-                        .system("You may think through the question internally, but your response must contain ONLY the final answer based on the provided context. Do not show your reasoning, thinking process, or methodology. Do not include phrases like 'Looking at the context', 'Based on the information', 'Let me think', or any analytical commentary. Provide only the direct, factual answer. If the context doesn't contain the answer, simply state: 'The provided context does not contain information to answer this question.'")
+                        .system("You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context.")
                         .user(llmSummaryPrompt).call().content(), this.timeoutExecutor)
                         .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                     if (statusListener != null) statusListener.onStatus("LLM response received", 90);
-                    // Clean reasoning tokens from response - COMMENTED OUT: Using structured prompting now
-                    // llmSummary = cleanRawLlmResponse(llmSummary);
                     answer = llmSummary + "\n\nSource: RAG context summarized by LLM";
                     source = "RAG";
                 } else {
@@ -837,352 +790,17 @@ public class RagService implements DisposableBean {
     }
 
 
-    /**
-     * Clean streaming chunks to remove reasoning patterns from LLM
-     * COMMENTED OUT: No longer using real streaming, using structured prompting instead
-     */
-    /*
-    private String cleanStreamingChunk(String chunk) {
-        if (chunk == null || chunk.trim().isEmpty()) {
-            return chunk;
-        }
-        
-        // Skip chunks that contain reasoning patterns - exact patterns from logs
-        String lowerChunk = chunk.toLowerCase();
-        if (lowerChunk.contains("okay, let's try to figure out") || 
-            lowerChunk.contains("first, i need to scan") ||
-            lowerChunk.contains("looking through the context") ||
-            lowerChunk.contains("looking at the text") ||
-            lowerChunk.contains("let me check again") ||
-            lowerChunk.contains("i need to recall") ||
-            lowerChunk.contains("wait, here's a part") ||
-            lowerChunk.contains("wait, there's a section") ||
-            lowerChunk.contains("another part mentions") ||
-            lowerChunk.contains("another section says") ||
-            lowerChunk.contains("hmm, that might be") ||
-            lowerChunk.contains("that seems a bit") ||
-            lowerChunk.contains("that doesn't make sense") ||
-            lowerChunk.contains("maybe the context is") ||
-            lowerChunk.contains("alternatively, looking") ||
-            lowerChunk.contains("but wait, the user") ||
-            lowerChunk.contains("from general knowledge") ||
-            lowerChunk.contains("based on the provided") ||
-            lowerChunk.contains("according to the context") ||
-            lowerChunk.contains("in the context provided") ||
-            lowerChunk.contains("context says that") ||
-            lowerChunk.contains("the text mentions") ||
-            lowerChunk.contains("given the instructions") ||
-            lowerChunk.contains("since the context doesn't") ||
-            lowerChunk.contains("however, given that") ||
-            lowerChunk.contains("therefore, the answer") ||
-            lowerChunk.contains("okay,") || 
-            lowerChunk.contains("first,") ||
-            lowerChunk.contains("looking") ||
-            lowerChunk.contains("let me") ||
-            lowerChunk.contains("i need") ||
-            lowerChunk.contains("wait,") ||
-            lowerChunk.contains("hmm,") ||
-            lowerChunk.contains("based on") ||
-            lowerChunk.contains("according to") ||
-            lowerChunk.contains("the context") ||
-            lowerChunk.contains("from the") ||
-            lowerChunk.contains("in the") ||
-            lowerChunk.contains("given that") ||
-            lowerChunk.contains("since the") ||
-            lowerChunk.contains("however,") ||
-            lowerChunk.contains("therefore,") ||
-            lowerChunk.contains("alternatively") ||
-            lowerChunk.contains("but the") ||
-            lowerChunk.contains("so the") ||
-            lowerChunk.contains("thus") ||
-            lowerChunk.contains("hence") ||
-            lowerChunk.contains("consequently")) {
-            return ""; // Skip these chunks entirely
-        }
-        
-        return chunk;
-    }
-    */
+
 
     /**
-     * Clean raw LLM response by removing reasoning patterns from LLM
-     * COMMENTED OUT: No longer needed with structured prompting approach
-     */
-    /*
-    private String cleanRawLlmResponse(String rawResponse) {
-        if (rawResponse == null || rawResponse.trim().isEmpty()) {
-            return rawResponse;
-        }
-        
-        String cleaned = rawResponse.trim();
-        
-        // If response starts with reasoning, try to find the actual answer
-        if (cleaned.toLowerCase().startsWith("okay") || 
-            cleaned.toLowerCase().startsWith("first") ||
-            cleaned.toLowerCase().startsWith("looking") ||
-            cleaned.toLowerCase().startsWith("let me") ||
-            cleaned.toLowerCase().startsWith("i need") ||
-            cleaned.toLowerCase().startsWith("based on") ||
-            cleaned.toLowerCase().startsWith("according to")) {
-            
-            // Split by sentences and find first non-reasoning sentence
-            String[] sentences = cleaned.split("\\. ");
-            StringBuilder result = new StringBuilder();
-            boolean foundAnswer = false;
-            
-            for (String sentence : sentences) {
-                String lowerSentence = sentence.toLowerCase();
-                if (!lowerSentence.contains("okay") && 
-                    !lowerSentence.contains("first") &&
-                    !lowerSentence.contains("looking") &&
-                    !lowerSentence.contains("let me") &&
-                    !lowerSentence.contains("i need") &&
-                    !lowerSentence.contains("wait") &&
-                    !lowerSentence.contains("hmm") &&
-                    !lowerSentence.contains("based on") &&
-                    !lowerSentence.contains("according to") &&
-                    !lowerSentence.contains("the context") &&
-                    !lowerSentence.contains("from the") &&
-                    !lowerSentence.contains("in the") &&
-                    !lowerSentence.contains("given that") &&
-                    !lowerSentence.contains("since the") &&
-                    !lowerSentence.contains("however") &&
-                    !lowerSentence.contains("therefore") &&
-                    !lowerSentence.contains("alternatively") &&
-                    !lowerSentence.contains("but the") &&
-                    sentence.trim().length() > 10) {
-                    result.append(sentence.trim());
-                    if (!sentence.endsWith(".") && !sentence.endsWith("!") && !sentence.endsWith("?")) {
-                        result.append(".");
-                    }
-                    result.append(" ");
-                    foundAnswer = true;
-                }
-            }
-            
-            if (foundAnswer) {
-                cleaned = result.toString().trim();
-            } else {
-                return "The provided context does not contain information to answer this question.";
-            }
-        }
-        
-        // Remove any remaining reasoning patterns
-        cleaned = cleaned.replaceAll("(Okay, let's.*?\\.|First, I.*?\\.|Looking.*?\\.|Let me.*?\\.|I need.*?\\.|Wait.*?\\.|Hmm.*?\\.|Based on.*?\\.|According to.*?\\.|The context.*?\\.|From the.*?\\.|In the.*?\\.|Given that.*?\\.|Since the.*?\\.|However.*?\\.|Therefore.*?\\.|Alternatively.*?\\.|But the.*?\\.)", "").trim();
-        
-        // Remove multiple spaces and clean up
-        cleaned = cleaned.replaceAll("\\s{2,}", " ").trim();
-        
-        // If the response is mostly reasoning with little actual content, return a clean error
-        if (cleaned.length() < 20 || cleaned.toLowerCase().contains("context does not") || 
-            cleaned.toLowerCase().contains("no information") || 
-            cleaned.toLowerCase().contains("can't find")) {
-            return "The provided context does not contain information to answer this question.";
-        }
-        
-        return cleaned;
-    }
-    */
-
-    /**
-     * Extracts the content from the <answer> tag in the LLM's response.
-     * More robust extraction that handles various response formats.
+     * Simple answer extraction - just return the response as-is
      */
     private String extractAnswer(String llmResponse) {
-        return extractAnswer(llmResponse, false);
-    }
-
-    /**
-     * Extracts the content from the <answer> tag in the LLM's response.
-     * More robust extraction that handles various response formats.
-     * @param isRagOnly If true, applies stricter filtering for RAG Only mode
-     */
-    private String extractAnswer(String llmResponse, boolean isRagOnly) {
-        // If reasoning is enabled globally, skip filtering
-        if (enableReasoning) {
-            logger.info("Reasoning enabled globally, returning raw response");
-            return llmResponse;
-        }
-        
-        logger.info("Reasoning disabled, applying filtering. Response length: {}", llmResponse.length());
         if (llmResponse == null || llmResponse.trim().isEmpty()) {
             return "The provided context does not contain information to answer this question.";
         }
         
-        String response = llmResponse.trim();
-        logger.info("Processing LLM response for answer extraction. Length: {}", response.length());
-        
-        // First, try to extract from <answer> tags
-        java.util.regex.Pattern answerPattern = java.util.regex.Pattern.compile("<answer>(.*?)</answer>", java.util.regex.Pattern.DOTALL);
-        java.util.regex.Matcher answerMatcher = answerPattern.matcher(response);
-        
-        if (answerMatcher.find()) {
-            String answer = answerMatcher.group(1).trim();
-            logger.info("Successfully extracted answer from <answer> tags: {}", answer.substring(0, Math.min(100, answer.length())));
-            return answer;
-        }
-        
-        // If no <answer> tags, try to find text after </thinking> tag
-        int thinkingEndIndex = response.lastIndexOf("</thinking>");
-        if (thinkingEndIndex != -1) {
-            String potentialAnswer = response.substring(thinkingEndIndex + "</thinking>".length()).trim();
-            if (!potentialAnswer.isEmpty() && potentialAnswer.length() > 10) {
-                logger.info("Found potential answer after </thinking> tag: {}", potentialAnswer.substring(0, Math.min(100, potentialAnswer.length())));
-                return potentialAnswer;
-            }
-        }
-        
-        // If no structured tags found, check if the response looks like it has thinking content
-        if (response.contains("<thinking>") || response.toLowerCase().contains("thinking:")) {
-            // Try to extract everything after the thinking section
-            String[] parts = response.split("</thinking>");
-            if (parts.length > 1) {
-                String afterThinking = parts[parts.length - 1].trim();
-                if (!afterThinking.isEmpty() && afterThinking.length() > 10) {
-                    logger.info("Extracted answer after thinking section: {}", afterThinking.substring(0, Math.min(100, afterThinking.length())));
-                    return afterThinking;
-                }
-            }
-        }
-        
-        // If the response doesn't have structured tags, it might be a direct answer
-        // Only do minimal cleaning to avoid truncation
-        String cleaned = response;
-        
-        // Remove obvious thinking prefixes if they exist
-        String[] thinkingPrefixes = {
-            "thinking:", "let me think", "okay,", "first,", "looking at this", 
-            "based on the", "according to the", "from the context"
-        };
-        
-        for (String prefix : thinkingPrefixes) {
-            if (cleaned.toLowerCase().startsWith(prefix.toLowerCase())) {
-                // Find the first sentence that doesn't start with a thinking prefix
-                String[] sentences = cleaned.split("(?<=[.!?])\\s+");
-                StringBuilder result = new StringBuilder();
-                boolean foundAnswer = false;
-                
-                for (String sentence : sentences) {
-                    String lowerSentence = sentence.toLowerCase().trim();
-                    boolean isThinkingSentence = false;
-                    
-                    for (String thinkingPrefix : thinkingPrefixes) {
-                        if (lowerSentence.startsWith(thinkingPrefix.toLowerCase())) {
-                            isThinkingSentence = true;
-                            break;
-                        }
-                    }
-                    
-                    if (!isThinkingSentence && sentence.trim().length() > 10) {
-                        result.append(sentence.trim()).append(" ");
-                        foundAnswer = true;
-                    }
-                }
-                
-                if (foundAnswer) {
-                    cleaned = result.toString().trim();
-                    logger.info("Cleaned response by removing thinking prefixes: {}", cleaned.substring(0, Math.min(100, cleaned.length())));
-                    return cleaned;
-                }
-            }
-        }
-        
-        // If we get here, the response might be a direct answer without thinking content
-        // For RAG Only mode, apply stricter filtering
-        if (isRagOnly) {
-            logger.info("Applying RAG Only filtering to response");
-            // Remove common reasoning patterns that might have slipped through
-            String ragOnlyCleaned = response;
-            
-            // Remove reasoning patterns
-            String[] reasoningPatterns = {
-                "okay, let's", "first, i'll", "looking at", "let me check", "i need to",
-                "based on the", "according to the", "from the context", "the context says",
-                "wait,", "hmm,", "however,", "therefore,", "alternatively,", "but wait",
-                "that seems", "that might be", "it's possible", "maybe", "perhaps",
-                "in the spider-man", "in the context", "the user's question", "the user mentioned",
-                "the user is asking", "the context has", "the context contains", "the context includes",
-                "the context mentions", "the context states", "the context clearly", "the context also",
-                "for example,", "another part", "then there's", "so the answer", "but the question",
-                "the direct answer", "the main one", "the answer should be", "the answer is",
-                "okay, so", "let me think", "first, i remember", "i should confirm",
-                "the text talks about", "there's some confusion", "the context seems",
-                "but the user is asking", "even though the context", "the answer is there",
-                "i should confirm that", "the main points are", "the context provided",
-                "the context is a bit", "the context is not perfectly clear"
-            };
-            
-            for (String pattern : reasoningPatterns) {
-                ragOnlyCleaned = ragOnlyCleaned.replaceAll("(?i)" + pattern + ".*?[.!?]\\s*", "");
-            }
-            
-            // Remove sentences that contain reasoning patterns
-            String[] sentences = ragOnlyCleaned.split("(?<=[.!?])\\s+");
-            StringBuilder cleanedSentences = new StringBuilder();
-            
-            for (String sentence : sentences) {
-                String lowerSentence = sentence.toLowerCase().trim();
-                boolean shouldRemove = false;
-                
-                // Check if sentence contains reasoning patterns
-                for (String pattern : reasoningPatterns) {
-                    if (lowerSentence.contains(pattern.toLowerCase())) {
-                        shouldRemove = true;
-                        break;
-                    }
-                }
-                
-                // Also check for common reasoning indicators
-                if (lowerSentence.contains("the user") || 
-                    lowerSentence.contains("the context") ||
-                    lowerSentence.contains("for example") ||
-                    lowerSentence.contains("another part") ||
-                    lowerSentence.contains("then there's") ||
-                    lowerSentence.contains("so the answer") ||
-                    lowerSentence.contains("but the question") ||
-                    lowerSentence.contains("the direct answer") ||
-                    lowerSentence.contains("the main one") ||
-                    lowerSentence.contains("the answer should be") ||
-                    lowerSentence.contains("the answer is") ||
-                    lowerSentence.contains("okay, so") ||
-                    lowerSentence.contains("let me think") ||
-                    lowerSentence.contains("first, i remember") ||
-                    lowerSentence.contains("i should confirm") ||
-                    lowerSentence.contains("the text talks about") ||
-                    lowerSentence.contains("there's some confusion") ||
-                    lowerSentence.contains("the context seems") ||
-                    lowerSentence.contains("but the user is asking") ||
-                    lowerSentence.contains("even though the context") ||
-                    lowerSentence.contains("the answer is there") ||
-                    lowerSentence.contains("i should confirm that")) {
-                    shouldRemove = true;
-                }
-                
-                if (!shouldRemove && sentence.trim().length() > 5) {
-                    cleanedSentences.append(sentence.trim()).append(" ");
-                }
-            }
-            
-            ragOnlyCleaned = cleanedSentences.toString().trim();
-            
-            // Remove multiple spaces and clean up
-            ragOnlyCleaned = ragOnlyCleaned.replaceAll("\\s{2,}", " ").trim();
-            
-            logger.info("RAG Only filtering complete. Original sentences: {}, Cleaned sentences: {}", 
-                       sentences.length, cleanedSentences.toString().split("(?<=[.!?])\\s+").length);
-            
-            // If the cleaned response is significantly shorter, use it
-            if (ragOnlyCleaned.length() > 20 && ragOnlyCleaned.length() < response.length() * 0.8) {
-                logger.info("Applied RAG Only filtering. Original: {} chars, Cleaned: {} chars", 
-                           response.length(), ragOnlyCleaned.length());
-                return ragOnlyCleaned;
-            }
-        }
-        
-        // Return it as-is to avoid truncation
-        logger.info("Using raw response as answer (no structured tags or thinking content found): {}", 
-                   response.substring(0, Math.min(100, response.length())));
-        return response;
+        return llmResponse.trim();
     }
 
     /**

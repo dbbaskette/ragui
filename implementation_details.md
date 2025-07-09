@@ -60,480 +60,210 @@ Frontend polling `/api/status` will see these updates in real-time.
 # RAG UI Implementation Details
 
 ## Overview
-This document contains technical implementation details, configuration notes, and lessons learned during the development and deployment of the RAG UI application.
+RAG UI is a Spring Boot application that provides a conversational interface for querying a vector database using RAG (Retrieval-Augmented Generation) techniques. The system supports multiple response modes and provides both streaming and non-streaming interfaces.
 
-## EmbedProc RabbitMQ Monitoring Integration (Latest Update)
+## Core Components
 
-### Overview
-Added comprehensive RabbitMQ integration to monitor embedProc instances in real-time. This feature consumes metrics from the `embedproc.metrics` queue and provides REST endpoints to view processing status.
+### RagService
+The main service that handles all RAG operations. Located at `src/main/java/com/baskettecase/ragui/service/RagService.java`.
 
-### New Components Added
+#### Key Features:
+- **Multiple Response Modes**: Pure LLM, RAG + LLM Fallback, RAG Only, and Raw RAG
+- **Streaming Support**: Real-time response streaming with progress updates
+- **Token Management**: Prevents LLM truncation through token-aware context management
+- **Query Processing**: Intelligent query cleaning and expansion
+- **Simple System Prompts**: Clean, direct prompts for each mode without complex filtering
 
-#### Dependencies
-- **spring-boot-starter-amqp**: Added to `pom.xml` for RabbitMQ support
+#### Response Modes:
 
-#### Configuration Properties
-**Local Development (`application.properties`)**:
+1. **Pure LLM Mode**
+   - Uses only the LLM's knowledge
+   - System prompt: "You are a helpful AI assistant. Answer the user's question directly and clearly using your knowledge."
+
+2. **RAG + LLM Fallback Mode**
+   - Combines retrieved context with LLM knowledge
+   - System prompt: "You are a helpful AI assistant. Use the provided context and your knowledge to answer the user's question directly and clearly."
+
+3. **RAG Only Mode**
+   - Uses only retrieved context, no external knowledge
+   - System prompt: "You are a helpful AI assistant. Answer the user's question using ONLY the provided context. If the context doesn't contain enough information, simply state that the information is not available in the provided context."
+
+4. **Raw RAG Mode**
+   - Returns raw retrieved documents without LLM processing
+   - Used for debugging and document inspection
+
+#### Simplified Answer Extraction:
+- Removed complex filtering and reasoning pattern removal
+- Simple `extractAnswer()` method that returns the LLM response as-is
+- Clean, direct responses without post-processing
+
+### Configuration
+
+#### Token Management (application.properties):
 ```properties
-# RabbitMQ Configuration for embedProc streams (local development)
-spring.rabbitmq.host=${RABBIT_HOST:localhost}
-spring.rabbitmq.port=${RABBIT_PORT:5672}
-spring.rabbitmq.username=${RABBIT_USER:guest}
-spring.rabbitmq.password=${RABBIT_PASSWORD:guest}
-spring.rabbitmq.virtual-host=${RABBIT_VHOST:/}
-
-# EmbedProc Monitoring Configuration
-app.monitoring.rabbitmq.queue-name=embedproc.metrics
-app.monitoring.rabbitmq.enabled=${EMBEDPROC_MONITORING_ENABLED:true}
-app.monitoring.rabbitmq.cache-duration-minutes=${EMBEDPROC_CACHE_DURATION:30}
+# Token limits to prevent LLM truncation
+ragui.token.max-total-tokens=8000
+ragui.token.max-context-tokens=3000
+ragui.token.max-response-tokens=2000
 ```
 
-**Cloud Deployment (`application-cloud.properties`)**:
+#### Context Management:
 ```properties
-# RabbitMQ Configuration for embedProc streams
-spring.rabbitmq.host=${vcap.services.rabbitmq.credentials.host:localhost}
-spring.rabbitmq.port=${vcap.services.rabbitmq.credentials.port:5672}
-spring.rabbitmq.username=${vcap.services.rabbitmq.credentials.username:guest}
-spring.rabbitmq.password=${vcap.services.rabbitmq.credentials.password:guest}
-spring.rabbitmq.virtual-host=${vcap.services.rabbitmq.credentials.vhost:/}
+# Context size limits
+ragui.context.max-chars=4000
+ragui.context.min-doc-chars=200
 ```
 
-#### New Classes Created
-
-1. **EmbedProcMetrics.java** - DTO for embedProc metrics message format
-   - Maps JSON from RabbitMQ queue: `instanceId`, `timestamp`, `totalChunks`, `processedChunks`, `errorCount`, `processingRate`, `uptime`, `status`
-   - Includes calculated `progressPercentage` property
-   - Tracks `lastUpdated` timestamp for cache management
-
-2. **EmbedStatusResponse.java** - Response DTO for `/embed-status` endpoint
-   - Contains list of current instances and summary statistics
-   - Summary includes: total/active instances, processed chunks, error counts, processing rates, status distribution
-
-3. **RabbitMQConfig.java** - RabbitMQ configuration
-   - Declares `embedproc.metrics` queue as durable
-   - Configures Jackson JSON message converter
-   - Only activated when `app.monitoring.rabbitmq.enabled=true`
-
-4. **EmbedProcMonitoringService.java** - Core monitoring service
-   - `@RabbitListener` for consuming metrics from queue
-   - Thread-safe cache using `ConcurrentHashMap`
-   - Automatic cleanup of stale entries (configurable duration)
-   - Generates summary statistics and status counts
-
-5. **EmbedStatusController.java** - REST controller
-   - Main endpoint: `GET /api/embed-status` - Returns all instance statuses
-   - Instance-specific: `GET /api/embed-status/{instanceId}` - Single instance status
-   - Debug endpoints: `/embed-status/debug/cache` and `/embed-status/debug/clear-cache`
-   - Health check: `/embed-status/health`
-
-### Features Implemented
-
-- **Real-time Monitoring**: Automatically consumes RabbitMQ messages as embedProc instances send status updates
-- **Intelligent Caching**: Maintains recent status of all instances with configurable expiration (default 30 minutes)
-- **Summary Statistics**: Aggregates data across all instances (total processed, error counts, average rates)
-- **Status Tracking**: Counts instances by status (PROCESSING, ERROR, COMPLETED, etc.)
-- **Error Handling**: Graceful handling of RabbitMQ connection issues and malformed messages
-- **Conditional Activation**: Can be disabled via `app.monitoring.rabbitmq.enabled=false`
-- **Debug Capabilities**: Cache inspection and manual cache clearing for troubleshooting
-
-### API Endpoints
-
-- `GET /api/embed-status` - Current status of all embedProc instances
-- `GET /api/embed-status/{instanceId}` - Status of specific instance  
-- `GET /api/embed-status/health` - Health check for monitoring system
-- `GET /api/embed-status/debug/cache` - Cache statistics and debug info
-- `POST /api/embed-status/debug/clear-cache` - Manual cache clearing
-
-### Example Response Format
-```json
-{
-  "instances": [
-    {
-      "instanceId": "embedProc-worker-1",
-      "timestamp": "2025-01-03T10:30:00Z",
-      "totalChunks": 1500,
-      "processedChunks": 750,
-      "errorCount": 2,
-      "processingRate": 12.5,
-      "uptime": "2h 15m",
-      "status": "PROCESSING",
-      "lastUpdated": "2025-01-03T10:30:05Z",
-      "progressPercentage": 50.0
-    }
-  ],
-  "summary": {
-    "totalInstances": 1,
-    "activeInstances": 1,
-    "totalProcessedChunks": 750,
-    "totalErrorCount": 2,
-    "averageProcessingRate": 12.5,
-    "lastRefresh": "2025-01-03T10:30:05Z",
-    "statusCounts": {
-      "PROCESSING": 1
-    }
-  }
-}
-```
-
-### Integration Benefits
-- **Non-intrusive**: Additive feature, no existing functionality modified
-- **Configurable**: All RabbitMQ settings via properties, can be disabled
-- **Cloud-ready**: Supports Cloud Foundry VCAP services binding
-- **Production-ready**: Proper error handling, logging, and health checks
-- **RESTful**: Standard REST API patterns with appropriate HTTP status codes
-
-## Embed Status Dashboard UI (Latest Update)
-
-### Overview
-Created a modern, responsive web dashboard for monitoring embedProc instances at `/embed-status`. The dashboard provides real-time visualization of processing status, metrics, and instance health.
-
-### Technical Implementation
-
-#### Frontend Architecture
-- **Thymeleaf Template**: Server-side rendered HTML with initial data population
-- **Responsive Design**: CSS Grid and Flexbox for mobile-friendly layout
-- **Real-time Updates**: JavaScript polling with 30-second auto-refresh
-- **Modern UI**: Glassmorphism design with gradient backgrounds and smooth animations
-
-#### New Files Created
-1. **`src/main/resources/templates/embed-status.html`** - Thymeleaf template
-   - Server-side rendering of initial data
-   - Responsive grid layout for instance cards
-   - Status indicators and progress bars
-   - Error handling for missing data
-
-2. **`src/main/resources/static/embed-status.css`** - Modern styling
-   - Glassmorphism design with backdrop blur effects
-   - Gradient backgrounds and smooth animations
-   - Responsive grid layouts
-   - Status color coding (active=green, idle=orange, error=red, offline=gray)
-
-3. **`src/main/resources/static/embed-status.js`** - Interactive functionality
-   - Auto-refresh every 30 seconds
-   - Manual refresh button with loading states
-   - Clear cache functionality with confirmation dialog
-   - Dynamic data updates via AJAX
-   - Error handling and user feedback
-   - Notification system for user actions
-
-#### Backend Integration
-1. **`EmbedStatusPageController.java`** - Web page controller
-   - Serves `/embed-status` route
-   - Populates initial data in Thymeleaf model
-   - Handles errors gracefully
-
-2. **Security Configuration** - Updated `SecurityConfig.java`
-   - Permits `/embed-status` route without authentication
-   - Maintains existing API endpoint security
-
-3. **Dependencies** - Added `spring-boot-starter-thymeleaf`
-   - Enables server-side template rendering
-   - Provides template engine for dynamic content
-
-### Dashboard Features
-
-#### Summary Cards
-- **Total Instances**: Count of all embedProc instances
-- **Active Instances**: Currently processing instances
-- **Processing Rate**: Average chunks per second across all instances
-- **Total Chunks**: Cumulative processed chunks
-- **Error Count**: Total errors across all instances
-
-#### Instance Details
-- **Individual Cards**: One card per embedProc instance
-- **Real-time Metrics**: Processed chunks, total chunks, processing rate, errors
-- **Progress Visualization**: Progress bars showing completion percentage
-- **Status Indicators**: Color-coded badges (active, idle, error, offline)
-- **Timestamps**: Last updated time and uptime information
-
-#### Interactive Elements
-- **Auto-refresh**: Updates every 30 seconds automatically
-- **Manual Refresh**: Button to force immediate update
-- **Clear Cache**: Button to clear monitoring cache and refresh data
-- **Loading States**: Visual feedback during data loading
-- **Error Handling**: Graceful display of connection errors
-- **Notifications**: Success/error messages for user actions
-
-### Responsive Design
-- **Mobile-friendly**: Adapts to different screen sizes
-- **Grid Layout**: Responsive grid for instance cards
-- **Touch-friendly**: Large buttons and touch targets
-- **Progressive Enhancement**: Works without JavaScript (server-side rendering)
-
-### Security Considerations
-- **Public Access**: Dashboard accessible without authentication for monitoring
-- **API Security**: `/api/embed-status` endpoints remain secure
-- **No Sensitive Data**: Only displays processing metrics, no credentials or secrets
-
-### Deployment Notes
-- **Static Assets**: CSS and JS files served from `/static/` directory
-- **Template Location**: Thymeleaf templates in `/templates/` directory
-- **Cloud Foundry**: Compatible with existing deployment configuration
-- **Build Process**: No additional build steps required
-
-### Usage
-- **URL**: `https://your-app-domain/embed-status`
-- **Refresh**: Automatic every 30 seconds, manual via button
-- **Clear Cache**: Manual cache clearing with confirmation dialog
-- **Monitoring**: Real-time view of embedProc processing status
-- **Troubleshooting**: Visual indicators for stuck or failed instances
-- **Notifications**: Success/error feedback for user actions
-
-## LLM Response Truncation Fix (Latest Update)
-
-### Problem Identified
-**Issue**: LLM responses were getting truncated mid-sentence, affecting both Pure LLM and RAG modes. The problem was not token limits but rather:
-
-1. **Structured Prompting Issues**: Complex system prompts with `<thinking>` and `<answer>` blocks were causing the LLM to generate incomplete responses
-2. **Aggressive Response Cleaning**: The `extractAnswer()` method was too aggressive in cleaning up responses, potentially truncating valid content
-3. **Inconsistent Response Formatting**: LLM wasn't consistently formatting responses with the expected `<answer>` tags
-
-### Root Cause Analysis
-The truncation was happening in the response processing pipeline, not in the token management:
-- LLM was generating responses that didn't match the expected structured format
-- `extractAnswer()` method was falling back to aggressive cleaning when tags weren't found
-- Complex system prompts were causing the LLM to generate incomplete responses
-
-### Solution Implemented
-
-#### 1. Simplified System Prompts
-Replaced complex structured prompting with direct, clear instructions:
-- **Pure LLM**: "Provide a clear, direct answer to the user's question. Be comprehensive and complete."
-- **RAG + LLM Fallback**: "Answer the question using the provided context and your own knowledge. If the context contains relevant information, use it. If the context doesn't contain the answer, use your general knowledge. Provide a comprehensive answer that combines both sources of information."
-- **RAG Only**: "Answer the question using ONLY the information provided in the context. Do not include any reasoning, analysis, or thinking process. Provide a direct, factual answer based on the context. If the context does not contain the answer, simply state 'The context does not contain information to answer this question.' Keep your response concise and to the point."
-
-**Qwen Model Integration**: Added `/no_think` directive to all system prompts when reasoning is disabled to properly control the Qwen3-30B-A3B model's thinking behavior.
-
-#### 2. Robust Answer Extraction
-Enhanced `extractAnswer()` method to handle various response formats:
-- **Primary**: Extract from `<answer>` tags if present
-- **Secondary**: Extract text after `</thinking>` tags
-- **Tertiary**: Handle responses with thinking prefixes
-- **Fallback**: Return raw response if no structured content found
-
-#### 3. Improved Logging
-Added comprehensive logging for response processing:
-- Logs response length and extraction method used
-- Shows first 100 characters of extracted answers for debugging
-- Tracks which extraction strategy was successful
-
-#### 4. Token Management (Still Implemented)
-Maintained token management as a secondary protection:
-- Configurable token limits for context and responses
-- Token-aware context formatting
-- Prompt validation to prevent token overflow
-
-### Benefits Achieved
-- **No More Truncation**: Responses complete fully without mid-sentence cuts
-- **Robust Response Handling**: Handles various LLM response formats gracefully
-- **Simplified Prompting**: Direct, clear instructions reduce response complexity
-- **Better Error Recovery**: Multiple fallback strategies for answer extraction
-- **Detailed Monitoring**: Comprehensive logging for debugging response processing
-
-### Configuration Options
-- `ragui.token.max-total-tokens`: Maximum total tokens for entire prompt (secondary protection)
-- `ragui.token.max-context-tokens`: Maximum tokens allowed for context
-- `ragui.token.max-response-tokens`: Reserved tokens for LLM response
-- `ragui.context.max-chars`: Character limit (legacy, now secondary to token limits)
-
-### Files Modified
-- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Added token management methods and integration
-- `src/main/resources/application.properties`: Added token configuration
-- `src/main/resources/application-cloud.properties`: Added token configuration
-
-## RAG Mode Improvements (Previous Update)
-
-### RAG Only Mode Improvements (Latest Update)
-
-### RAG Only Response Quality Fix
-**Problem**: RAG Only mode was returning verbose LLM reasoning steps instead of clean, direct answers. Users were seeing all the internal thinking process like "Looking through the context", "Let me check again", etc.
-
-**Root Cause**: 
-- **Streaming vs. Reasoning Conflict**: Reasoning models naturally generate thinking chunks first, and streaming sends these chunks immediately to the user
-- Chunk-level filtering couldn't effectively separate reasoning from final answers  
-- Fighting the natural flow of reasoning models instead of working with it
-
-**Solution**:
-- **Hybrid Approach - Non-Streaming Processing + Simulated Streaming**: Let the LLM complete its full response (including internal thinking), clean it, then simulate streaming to maintain consistent UX
-- **Enhanced System Prompt**: Updated to explicitly allow internal thinking while requiring clean output: "You may think through the question internally, but your response must contain ONLY the final answer based on the provided context"
-- **Improved Response Processing**: Post-process the complete response using `cleanRawLlmResponse()` to extract the final answer and remove any reasoning that slipped through
-- **Streaming Simulation**: Added `simulateStreamingResponse()` method that chunks the clean response word-by-word to match the streaming experience of other modes
-- **Better Error Handling**: Added proper timeout and error handling for the non-streaming approach
-
-**Benefits**:
-- **Better Answer Quality**: LLM can use full reasoning capabilities to analyze context
-- **Clean User Experience**: Users only see the final, polished answer without reasoning steps
-- **Consistent UX**: All response modes now have the same streaming appearance to users
-- **Reliable Output**: No more reasoning chunks leaking through to the frontend
-- **Optimal Performance**: Single LLM call with simulated streaming for best of both worlds
-
-**Key Behavioral Changes**:
-- **RAG Only**: Now provides clean, direct answers sourced only from retrieved context (appears streaming but internally processes non-streaming for quality)
-- **RAG + LLM Fallback**: Still allows broader LLM knowledge when context is insufficient (true streaming)
-- **Pure LLM**: Unchanged - uses full LLM capabilities without context restrictions (true streaming)
-
-**User Experience**: All modes now appear to stream text naturally, maintaining consistent interface behavior while RAG Only delivers superior answer quality through internal processing.
-
-**Files Modified**:
-- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Switched RAG Only to non-streaming, enhanced system prompts, improved response processing
-
-## RAG Configuration Fixes (Previous Update)
-
-### Issues Identified and Resolved
-
-#### 1. Vector Search Similarity Threshold Too High
-**Problem**: The `VectorStoreDocumentRetriever` was hardcoded with a similarity threshold of 0.7, which is very restrictive for Spring AI 1.0.0. This caused the vector search to return 0 results even for queries that should match existing documents.
-
-**Root Cause**: Spring AI 1.0.0 documentation shows that the default threshold is 0.0 (accept all), and values closer to 1 indicate higher similarity. A threshold of 0.7 was excluding too many potentially relevant documents.
-
-**Solution**: 
-- Made similarity threshold configurable via `ragui.vector.similarity-threshold` property
-- Set default to 0.5 (more permissive)
-- Added `ragui.vector.top-k` property for configurable result count
-- Updated both local and cloud configurations
-
-**Configuration Added**:
+#### Vector Search:
 ```properties
-# RAG Configuration - More permissive similarity threshold
-ragui.vector.similarity-threshold=0.3
+# Vector similarity and retrieval settings
+ragui.vector.similarity-threshold=0.6
 ragui.vector.top-k=5
 ```
 
-#### 2. Vector Store Dimension Mismatch
-**Problem**: Local development used 768 dimensions while cloud used 1536 dimensions, suggesting different embedding models.
+### Query Processing
 
-**Solution**: 
-- Standardized both environments to use 1536 dimensions (OpenAI text-embedding-ada-002 standard)
-- Added explicit embedding model configuration
-- Ensured consistency between local and cloud profiles
+#### Query Cleaning:
+- Uses LLM to clean and rephrase user queries
+- Extracts length constraints for better responses
+- Can be bypassed with `ragui.debug.skip-query-cleaning=true`
 
-#### 3. Poor Error Message Formatting
-**Problem**: Error messages showed technical details like "No relevant context was found to answer your question.\n\nSource: 0 (no context)" which is confusing for users.
+#### Query Expansion:
+- Optional feature to improve retrieval
+- Controlled by `QueryExpansionController.isEnabled()`
 
-**Solution**: Cleaned up all error messages to be user-friendly:
-- "I couldn't find relevant information in the knowledge base to answer your question."
-- "I couldn't find any relevant documents in the knowledge base for your question."
+### Streaming Implementation
 
-#### 4. Missing Embedding Model Configuration
-**Problem**: No explicit embedding model configuration could lead to inconsistent vector dimensions.
+#### Simulated Streaming:
+- Uses `simulateStreamingResponse()` for consistent UX
+- Breaks responses into word-level chunks with small delays
+- Provides progress updates through `RagStatusListener`
 
-**Solution**: Added explicit embedding model configuration in both profiles:
-```properties
-# Local
-spring.ai.openai.embedding.options.model=text-embedding-ada-002
+#### Progress Tracking:
+- Query cleaning: 15-18%
+- Vector search: 20-40%
+- LLM processing: 70-90%
+- Completion: 100%
 
-# Cloud
-spring.ai.openai.embedding.options.model=${vcap.services.embed-model.credentials.model_name:text-embedding-ada-002}
-```
+### Error Handling
 
-### Files Modified
-- `src/main/java/com/baskettecase/ragui/service/RagService.java`: Made similarity threshold configurable, improved error messages
-- `src/main/resources/application.properties`: Added RAG config, fixed dimensions, added embedding model
-- `src/main/resources/application-cloud.properties`: Added RAG config, added embedding model config
+#### Timeout Management:
+- 180-second timeout for all async operations
+- Uses `CompletableFuture` with timeout executor
+- Graceful error messages for timeouts
 
-### Testing Recommendation
-After these changes, test with:
-1. Simple queries that should definitely match (e.g., if you have Spring Boot docs, query "What is Spring Boot?")
-2. Verify that similarity threshold can be adjusted via configuration
-3. Check that error messages are now user-friendly when no matches are found
+#### Exception Handling:
+- Comprehensive try-catch blocks
+- Detailed logging for debugging
+- User-friendly error messages
 
-## Previous Implementation Details
+### Performance Optimizations
 
-## Security Configuration Updates
+#### Token-Aware Context Management:
+- Estimates tokens using character count (1 token ≈ 4 characters)
+- Prevents exceeding LLM token limits
+- Balances context inclusion with response space
 
-### Spring Security Configuration Fix
-**Issue**: After deploying to Cloud Foundry, the application returned 403 Forbidden errors for API calls.
-**Cause**: Spring Security was requiring authentication for all requests, including the `/api/**` endpoints used by the frontend.
-**Solution**: Updated `SecurityConfig.java` to permit API endpoints and static resources without authentication.
+#### Async Processing:
+- Non-blocking operations using `CompletableFuture`
+- Shared timeout executor for resource efficiency
+- Concurrent vector search and LLM calls
 
-**Key Changes**:
-- Added `.requestMatchers("/api/**").permitAll()` for API endpoints
-- Added `.requestMatchers("/*.css", "/*.js", "/*.png", "/*.ico", "/*.html").permitAll()` for static files
-- Disabled CSRF with `.csrf(csrf -> csrf.disable())`
-- Added `/actuator/**` to permitted paths
+### Debugging Features
 
-### Static Resource Serving Fix
-**Issue**: CSS and JavaScript files were being served as HTML content (redirected to login page).
-**Solution**: Added specific matchers for root-level static files in security configuration.
+#### Logging:
+- Detailed debug logs for vector search
+- Token estimation logging
+- Response mode tracking
 
-## Actuator Configuration
-**Change**: Set `management.endpoint.health.show-details=always` to display health check details after removing authentication.
+#### Configuration Flags:
+- `ragui.debug.skip-query-cleaning`: Bypass query processing
+- Query expansion enable/disable
+- Verbose logging controls
 
-## UI Layout Improvements
+## Architecture Patterns
 
-### Status Panel Optimization
-**Issue**: With 8+ status messages, the status area and chat window grew so large that response mode controls were pushed off-screen.
+### Service Layer:
+- `RagService`: Main business logic
+- `JobService`: Background job processing
+- `EmbedProcMonitoringService`: Embedding process monitoring
 
-**Solution**: Implemented comprehensive CSS improvements:
-- Reduced chat window height from 450px to 320px on desktop
-- Added status log panel with:
-  - Maximum height of 100px with scrolling
-  - Smaller font size (0.65em)
-  - Compact spacing (2px between entries)
-  - Monospace font for consistency
-  - Automatic scroll to newest entries
-- Enhanced mobile responsiveness with even smaller fonts and heights
-- Status entries now show ellipsis for long text
-- Most recent status entry is highlighted
+### Controller Layer:
+- `ChatController`: Main chat interface
+- `JobController`: Background job management
+- `StatusController`: System status endpoints
 
-**Files Modified**: `src/main/resources/static/style.css`
+### Configuration:
+- `AiConfig`: AI service configuration
+- `SecurityConfig`: Authentication setup
+- `CloudConfig`: Cloud Foundry integration
 
-## Deployment Automation
+## Integration Points
 
-### Deploy Script Creation
-Created `deploy.sh` script for streamlined deployment process:
-- Combines Maven build and Cloud Foundry deployment
-- Auto-detects version from pom.xml
-- Validates CF CLI installation and login status
-- Updates manifest.yml with correct JAR path automatically
-- Supports command-line options (`--skip-build`, `--app-name`)
-- Provides colored output and status indicators
-- Made executable with proper permissions
+### Vector Database:
+- PostgreSQL with pgvector extension
+- Cosine distance similarity
+- Configurable similarity thresholds
 
-**Usage**: `./deploy.sh` or `./deploy.sh --skip-build --app-name my-app`
+### AI Services:
+- OpenAI-compatible API endpoints
+- Configurable models for chat and embedding
+- Token-aware prompt management
 
-## Architecture Notes
+### Cloud Foundry:
+- Service binding for database and AI services
+- Environment-specific configuration
+- Health check endpoints
 
-### Vector Store
-- Using PostgreSQL with pgvector extension
-- Configured for COSINE_DISTANCE similarity
-- Table name: `vector_store`
-- HNSW index type for efficient similarity search
+## Security
 
-### Spring AI Integration
-- Spring AI 1.0.0 with OpenAI integration
-- Automatic configuration via Cloud Foundry VCAP services
-- RAG implementation using VectorStoreDocumentRetriever
-- Streaming and non-streaming chat support
+### Authentication:
+- Basic authentication with configurable credentials
+- Default user: `tanzu` / `t@nzu123`
+- Configurable via `app.security.default-user.*`
 
-### Job Management
-- Asynchronous processing with ExecutorService
-- Timeout handling (180 seconds default)
-- Status tracking with progress indicators
-- Support for multiple response modes (RAG-only, RAG+LLM fallback, Pure LLM, Raw RAG)
+### CORS:
+- Configured for web interface access
+- Cross-origin request handling
 
-## Gotchas and Lessons Learned
+## Monitoring
 
-### Cloud Foundry Deployment
-1. **VCAP Services**: Ensure service names in manifest.yml match bound services
-2. **Memory Allocation**: 2GB memory allocation needed for Spring AI + OpenAI integration
-3. **Profile Activation**: Use `SPRING_PROFILES_ACTIVE: cloud` for environment-specific config
-4. **Static Resources**: Spring Security can interfere with static file serving
+### Health Checks:
+- Actuator endpoints for health monitoring
+- Detailed health information exposure
+- Cloud Foundry integration
 
-### Spring Security
-1. **API Endpoints**: Remember to explicitly permit API endpoints used by frontend
-2. **Static Files**: Root-level static files need specific security matchers
-3. **CSRF**: Disable CSRF for API-only applications to avoid token issues
+### Metrics:
+- Embedding process monitoring
+- Response time tracking
+- Error rate monitoring
 
-### Spring AI Vector Search
-1. **Similarity Thresholds**: Lower thresholds (0.3-0.5) work better than high thresholds (0.7+)
-2. **Dimensions**: Ensure vector store dimensions match embedding model dimensions
-3. **Error Handling**: Provide user-friendly messages for no-match scenarios
-4. **Configuration**: Make similarity thresholds configurable rather than hardcoded
-5. **RAG Only Mode**: Requires strong system prompts and response filtering to prevent LLM reasoning display
+## Deployment
 
-### UI Considerations
-1. **Status Logging**: Implement scrollable, height-limited status panels for better UX
-2. **Mobile Responsiveness**: Test with various screen sizes and status message counts
-3. **Response Mode Controls**: Ensure critical UI elements remain visible with dynamic content
+### Cloud Foundry:
+- `manifest.yml` for deployment configuration
+- Service bindings for database and AI services
+- Environment-specific properties
+
+### Build:
+- Maven-based build system
+- Spring Boot executable JAR
+- Maven wrapper included
+
+## Development Workflow
+
+### Local Development:
+- H2 database for local testing
+- Embedded vector store
+- Hot reload support
+
+### Testing:
+- Unit tests for service components
+- Integration tests for API endpoints
+- Mock services for external dependencies
+
+### Documentation:
+- Comprehensive inline documentation
+- Implementation details tracking
+- Gotchas and edge cases documented
 

@@ -1,154 +1,201 @@
-# Gotchas and Edge Cases
+# RAG UI Gotchas and Edge Cases
 
-## LLM Response Truncation Issue
+## System Prompt Simplification
 
-### Problem Description
-**Issue**: LLM responses were getting truncated mid-sentence, affecting both Pure LLM and RAG modes. This was not a token limit issue but rather a response processing problem.
+### Removed Complex Filtering
+- **Issue**: Complex reasoning pattern filtering was causing inconsistent behavior
+- **Solution**: Simplified to clean, direct system prompts for each mode
+- **Impact**: More predictable responses, easier maintenance
+- **Note**: No more post-processing filtering - relies on clear prompts
 
-**Symptoms**:
-- Responses cut off abruptly mid-sentence
-- Incomplete answers that seemed to stop randomly
-- No error messages, just incomplete responses
-- Affected both Pure LLM and RAG modes equally
+### System Prompt Changes
+- **Pure LLM**: Simple, direct prompt without reasoning instructions
+- **RAG + LLM Fallback**: Clear instruction to use context and knowledge
+- **RAG Only**: Explicit instruction to use only context
+- **Result**: Cleaner responses without internal reasoning
 
-### Root Cause
-- **Structured Prompting Issues**: Complex system prompts with `<thinking>` and `<answer>` blocks were causing the LLM to generate incomplete responses
-- **Aggressive Response Cleaning**: The `extractAnswer()` method was too aggressive in cleaning up responses, potentially truncating valid content
-- **Inconsistent Response Formatting**: LLM wasn't consistently formatting responses with the expected `<answer>` tags
-- **Complex System Prompts**: Overly complex instructions were causing the LLM to generate incomplete responses
+## Token Management
 
-### Solution Implemented
-1. **Simplified System Prompts**: Replaced complex structured prompting with direct, clear instructions
-2. **Robust Answer Extraction**: Enhanced `extractAnswer()` method to handle various response formats gracefully
-3. **Improved Logging**: Added comprehensive logging for response processing and debugging
-4. **Token Management**: Maintained token management as secondary protection against actual token limits
+### LLM Truncation Prevention
+- **Issue**: LLM responses getting truncated due to token limits
+- **Solution**: Token-aware context management with character-based estimation
+- **Configuration**: 
+  - `ragui.token.max-total-tokens=8000`
+  - `ragui.token.max-context-tokens=3000`
+  - `ragui.token.max-response-tokens=2000`
+- **Note**: Uses 1 token ≈ 4 characters approximation
 
-### Prevention Strategies
-- Use simple, direct system prompts instead of complex structured instructions
-- Implement robust response extraction with multiple fallback strategies
-- Monitor response processing logs for extraction method used
-- Test with various response formats to ensure robustness
-- Keep system prompts concise and clear to avoid incomplete responses
+### Context Size Balancing
+- **Issue**: Too much context leaves no room for response
+- **Solution**: Dynamic context truncation based on token limits
+- **Configuration**: `ragui.context.max-chars=4000`
+- **Impact**: Prevents "Response too long" errors
 
-### Configuration
+## Vector Search Issues
+
+### Similarity Threshold Tuning
+- **Issue**: Too low threshold returns irrelevant documents
+- **Current Setting**: `ragui.vector.similarity-threshold=0.6`
+- **Impact**: Better quality matches, fewer false positives
+- **Monitoring**: Check distance values in debug logs
+
+### Document Retrieval Failures
+- **Issue**: No documents found for valid queries
+- **Causes**: 
+  - Query too specific
+  - Low similarity threshold
+  - Missing embeddings
+- **Debug**: Enable vector search debug logging
+- **Solution**: Query expansion or threshold adjustment
+
+## Query Processing
+
+### Query Cleaning Failures
+- **Issue**: LLM query cleaning sometimes fails
+- **Fallback**: `ragui.debug.skip-query-cleaning=true`
+- **Impact**: Uses original query directly
+- **Monitoring**: Check query cleaning logs
+
+### Query Expansion Issues
+- **Issue**: Expanded queries may not improve retrieval
+- **Control**: `QueryExpansionController.isEnabled()`
+- **Debug**: Monitor expansion results
+- **Solution**: Disable if not helping
+
+## Streaming Issues
+
+### Simulated Streaming Behavior
+- **Issue**: Not real streaming, but simulated for consistency
+- **Implementation**: `simulateStreamingResponse()` with word-level chunks
+- **Delay**: 50ms between chunks for realistic typing effect
+- **Note**: All modes use simulated streaming for UX consistency
+
+### Progress Tracking
+- **Issue**: Progress percentages may not reflect actual work
+- **Implementation**: Fixed percentages for different stages
+- **Stages**: Query cleaning (15-18%), Vector search (20-40%), LLM (70-90%)
+- **Note**: Estimates, not actual progress
+
+## Timeout Issues
+
+### LLM Timeout
+- **Timeout**: 180 seconds for all async operations
+- **Issue**: Long responses may timeout
+- **Monitoring**: Check timeout logs
+- **Solution**: Increase timeout or optimize prompts
+
+### Vector Search Timeout
+- **Issue**: Large vector databases may timeout
+- **Monitoring**: Vector search debug logs
+- **Solution**: Optimize similarity threshold or reduce top-k
+
+## Error Handling
+
+### Graceful Degradation
+- **Issue**: Complete failures when components fail
+- **Solution**: Comprehensive try-catch with user-friendly messages
+- **Examples**: 
+  - "Request timed out while processing"
+  - "Error occurred while processing with RAG context"
+- **Note**: Always provides some response to user
+
+### Logging Consistency
+- **Issue**: Inconsistent log levels and formats
+- **Solution**: Standardized logging with timestamps
+- **Format**: `[timestamp] Component (Mode) call started/finished`
+- **Debug**: Enable debug logging for troubleshooting
+
+## Configuration Issues
+
+### Environment-Specific Settings
+- **Issue**: Different behavior in local vs cloud environments
+- **Solution**: Environment-specific property files
+- **Local**: `application.properties`
+- **Cloud**: `application-cloud.properties`
+- **Note**: Check which properties file is being used
+
+### Service Binding
+- **Issue**: Cloud Foundry service bindings not working
+- **Symptoms**: Database connection failures, AI service errors
+- **Debug**: Check VCAP_SERVICES environment variable
+- **Solution**: Verify service bindings in manifest.yml
+
+## Performance Issues
+
+### Memory Usage
+- **Issue**: Large context processing may use significant memory
+- **Solution**: Token-aware context limits
+- **Monitoring**: Check memory usage in Cloud Foundry
+- **Optimization**: Reduce context size if needed
+
+### Response Time
+- **Issue**: Slow responses due to multiple async operations
+- **Components**: Query cleaning, vector search, LLM processing
+- **Optimization**: Parallel processing where possible
+- **Monitoring**: Response time logging
+
+## Debugging Tips
+
+### Enable Debug Logging
 ```properties
-# Token Management - Prevent LLM truncation
-ragui.token.max-total-tokens=8000
-ragui.token.max-context-tokens=3000
-ragui.token.max-response-tokens=2000
+logging.level.com.baskettecase.ragui=DEBUG
 ```
 
-### Testing
-To verify the fix works:
-1. Test with large context documents
-2. Monitor logs for token estimation messages
-3. Verify responses complete fully without truncation
-4. Check that context is intelligently truncated when needed
+### Vector Search Debug
+- Check distance values in logs
+- Monitor document retrieval counts
+- Verify similarity threshold impact
 
-## Vector Search Similarity Threshold
+### Token Estimation Debug
+- Monitor token estimates in logs
+- Check context truncation decisions
+- Verify token limit compliance
 
-### Problem Description
-**Issue**: Vector search was returning 0 results even for queries that should match existing documents.
+### Query Processing Debug
+- Monitor query cleaning results
+- Check query expansion effectiveness
+- Verify length constraint extraction
 
-### Root Cause
-Similarity threshold was set too high (0.7) for Spring AI 1.0.0, which uses cosine distance where values closer to 1 indicate higher similarity.
+## Common Issues and Solutions
 
-### Solution
-- Made similarity threshold configurable via `ragui.vector.similarity-threshold`
-- Set default to 0.5 (more permissive)
-- Added `ragui.vector.top-k` property for configurable result count
+### "No relevant information found"
+- **Cause**: No documents above similarity threshold
+- **Debug**: Check vector search logs
+- **Solution**: Lower similarity threshold or improve query
 
-### Prevention
-- Always test vector search with known queries
-- Monitor similarity scores in logs
-- Adjust threshold based on document quality and embedding model
+### "Request timed out"
+- **Cause**: LLM or vector search taking too long
+- **Debug**: Check timeout logs
+- **Solution**: Increase timeout or optimize queries
 
-## Security Configuration Issues
+### "Error during processing"
+- **Cause**: Various component failures
+- **Debug**: Check exception logs
+- **Solution**: Verify service connectivity and configuration
 
-### Problem Description
-**Issue**: 403 Forbidden errors when frontend tries to access API endpoints in Cloud Foundry.
+### Inconsistent Responses
+- **Cause**: Different response modes or token limits
+- **Debug**: Check response mode and token usage
+- **Solution**: Ensure consistent configuration across environments
 
-### Root Cause
-Spring Security was requiring authentication for all requests including API endpoints.
-
-### Solution
-Updated `SecurityConfig.java` to permit API endpoints and static resources without authentication.
-
-### Prevention
-- Test API endpoints after security configuration changes
-- Verify static resource serving works correctly
-- Monitor for authentication-related errors in production
-
-## Static Resource Serving Issues
-
-### Problem Description
-**Issue**: CSS and JavaScript files were being served as HTML content (redirected to login page).
-
-### Root Cause
-Static files were being redirected to login page instead of being served directly.
-
-### Solution
-Added specific matchers for root-level static files in security configuration.
-
-### Prevention
-- Test static resource loading after security changes
-- Verify MIME types are correct for all static files
-- Monitor for 404 errors on static resources
-
-## Database Connection Issues
-
-### Problem Description
-**Issue**: Database connection failures in Cloud Foundry environment.
-
-### Root Cause
-VCAP_SERVICES configuration not properly mapped to Spring Boot properties.
-
-### Solution
-Updated `application-cloud.properties` to properly map VCAP service credentials.
-
-### Prevention
-- Test database connectivity in cloud environment
-- Verify VCAP_SERVICES binding is correct
-- Monitor database connection health checks
-
-## RabbitMQ Connection Issues
-
-### Problem Description
-**Issue**: RabbitMQ connection failures for embedProc monitoring.
-
-### Root Cause
-Missing or incorrect RabbitMQ configuration in cloud environment.
-
-### Solution
-Added proper VCAP_SERVICES mapping for RabbitMQ credentials in cloud configuration.
-
-### Prevention
-- Test RabbitMQ connectivity in cloud environment
-- Verify VCAP_SERVICES binding for RabbitMQ
-- Monitor RabbitMQ connection health
-
-## General Best Practices
+## Best Practices
 
 ### Configuration Management
-- Always test configuration changes in target environment
 - Use environment-specific property files
-- Validate VCAP_SERVICES binding for cloud deployments
-- Monitor configuration loading in application startup logs
+- Document all configuration changes
+- Test configuration changes thoroughly
+
+### Monitoring
+- Enable appropriate log levels
+- Monitor response times and error rates
+- Track vector search performance
 
 ### Error Handling
-- Implement comprehensive error handling for all external service calls
-- Add timeout configurations for all async operations
+- Always provide user-friendly error messages
 - Log detailed error information for debugging
-- Provide user-friendly error messages
+- Implement graceful degradation
 
-### Performance Monitoring
-- Monitor response times for all API endpoints
-- Track token usage and context sizes
-- Monitor vector search performance
-- Log performance metrics for optimization
-
-### Security Considerations
-- Regularly review security configuration
-- Test authentication flows in production environment
-- Monitor for unauthorized access attempts
-- Keep dependencies updated for security patches 
+### Performance
+- Monitor token usage and context sizes
+- Optimize similarity thresholds
+- Use appropriate timeouts for operations 
