@@ -1058,12 +1058,54 @@ public class RagService implements DisposableBean {
                 "based on the", "according to the", "from the context", "the context says",
                 "wait,", "hmm,", "however,", "therefore,", "alternatively,", "but wait",
                 "that seems", "that might be", "it's possible", "maybe", "perhaps",
-                "in the spider-man", "in the context", "the user's question", "the user mentioned"
+                "in the spider-man", "in the context", "the user's question", "the user mentioned",
+                "the user is asking", "the context has", "the context contains", "the context includes",
+                "the context mentions", "the context states", "the context clearly", "the context also",
+                "for example,", "another part", "then there's", "so the answer", "but the question",
+                "the direct answer", "the main one", "the answer should be", "the answer is"
             };
             
             for (String pattern : reasoningPatterns) {
                 ragOnlyCleaned = ragOnlyCleaned.replaceAll("(?i)" + pattern + ".*?[.!?]\\s*", "");
             }
+            
+            // Remove sentences that contain reasoning patterns
+            String[] sentences = ragOnlyCleaned.split("(?<=[.!?])\\s+");
+            StringBuilder cleanedSentences = new StringBuilder();
+            
+            for (String sentence : sentences) {
+                String lowerSentence = sentence.toLowerCase().trim();
+                boolean shouldRemove = false;
+                
+                // Check if sentence contains reasoning patterns
+                for (String pattern : reasoningPatterns) {
+                    if (lowerSentence.contains(pattern.toLowerCase())) {
+                        shouldRemove = true;
+                        break;
+                    }
+                }
+                
+                // Also check for common reasoning indicators
+                if (lowerSentence.contains("the user") || 
+                    lowerSentence.contains("the context") ||
+                    lowerSentence.contains("for example") ||
+                    lowerSentence.contains("another part") ||
+                    lowerSentence.contains("then there's") ||
+                    lowerSentence.contains("so the answer") ||
+                    lowerSentence.contains("but the question") ||
+                    lowerSentence.contains("the direct answer") ||
+                    lowerSentence.contains("the main one") ||
+                    lowerSentence.contains("the answer should be") ||
+                    lowerSentence.contains("the answer is")) {
+                    shouldRemove = true;
+                }
+                
+                if (!shouldRemove && sentence.trim().length() > 5) {
+                    cleanedSentences.append(sentence.trim()).append(" ");
+                }
+            }
+            
+            ragOnlyCleaned = cleanedSentences.toString().trim();
             
             // Remove multiple spaces and clean up
             ragOnlyCleaned = ragOnlyCleaned.replaceAll("\\s{2,}", " ").trim();
